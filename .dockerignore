@@ -1,0 +1,8 @@
+node_modules
+apps/*/node_modules
+apps/*/dist
+.git
+.env
+npm-debug.log*
+coverage
+uploads

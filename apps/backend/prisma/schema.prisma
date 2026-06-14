@@ -1,0 +1,191 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum SeriesStatus {
+  AIRING
+  FINISHED
+  PAUSED
+}
+
+enum VideoType {
+  MP4
+  HLS
+  DRIVE
+  EMBED
+}
+
+enum VideoSource {
+  LOCAL
+  URL
+  DRIVE
+  HLS
+  EMBED
+}
+
+enum MovieStatus {
+  DRAFT
+  PUBLISHED
+  HIDDEN
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  name         String
+  role         Role      @default(USER)
+  active       Boolean   @default(true)
+  comments     Comment[]
+  favorites    Favorite[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model Series {
+  id          String       @id @default(cuid())
+  title       String
+  slug        String       @unique
+  description String
+  cover       String
+  banner      String
+  year        Int
+  status      SeriesStatus @default(AIRING)
+  views       Int          @default(0)
+  featured    Boolean      @default(false)
+  episodes    Episode[]
+  genres      Genre[]      @relation("SeriesGenres")
+  viewLogs    ViewLog[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model Episode {
+  id          String     @id @default(cuid())
+  seriesId    String
+  series      Series     @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+  number      Int
+  title       String
+  description String
+  videoUrl    String
+  videoType   VideoType   @default(MP4)
+  videoSource VideoSource @default(URL)
+  originalVideoUrl String?
+  processedVideoUrl String?
+  thumbnailUrl String?
+  publishedAt DateTime
+  views       Int        @default(0)
+  comments    Comment[]
+  favorites   Favorite[]
+  viewLogs    ViewLog[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@unique([seriesId, number])
+}
+
+model Genre {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  slug      String   @unique
+  series    Series[] @relation("SeriesGenres")
+  movies    Movie[]  @relation("MovieGenres")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Movie {
+  id                 String      @id @default(cuid())
+  title              String
+  slug               String      @unique
+  description        String
+  posterUrl          String
+  bannerUrl          String
+  videoSource        VideoSource @default(URL)
+  videoType          VideoType   @default(MP4)
+  videoUrl           String
+  originalVideoUrl   String?
+  processedVideoUrl  String?
+  duration           Int
+  releaseYear        Int
+  status             MovieStatus @default(DRAFT)
+  views              Int         @default(0)
+  genres             Genre[]     @relation("MovieGenres")
+  favorites          Favorite[]
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+}
+
+model Favorite {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episodeId String?
+  episode   Episode? @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  movieId   String?
+  movie     Movie?   @relation(fields: [movieId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, episodeId])
+  @@unique([userId, movieId])
+  @@index([userId, createdAt])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  body      String
+  approved  Boolean  @default(true)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episodeId String
+  episode   Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+}
+
+model SiteSetting {
+  id                    String    @id @default(cuid())
+  siteName              String    @default("NovaStream")
+  logo                  String?
+  favicon               String?
+  primaryColor          String    @default("#22d3ee")
+  secondaryColor        String    @default("#fb7185")
+  colorMode             String    @default("dark")
+  heroTitle             String    @default("Historias originales para descubrir")
+  heroText              String    @default("Explora series ficticias, episodios demo y contenido original.")
+  heroImage             String?
+  featuredSeriesIds     Json      @default("[]")
+  sectionOrder          Json      @default("[\"featured\",\"latest\",\"popular\",\"genres\",\"catalog\"]")
+  showLatestEpisodes    Boolean   @default(true)
+  showPopularSeries     Boolean   @default(true)
+  showGenres            Boolean   @default(true)
+  showComments          Boolean   @default(true)
+  showFooter            Boolean   @default(true)
+  footerText            String    @default("Contenido ficticio para catalogo privado.")
+  facebook              String?
+  instagram             String?
+  youtube               String?
+  tiktok                String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+}
+
+model ViewLog {
+  id        String   @id @default(cuid())
+  ip        String?
+  seriesId  String?
+  series    Series?  @relation(fields: [seriesId], references: [id], onDelete: SetNull)
+  episodeId String?
+  episode   Episode? @relation(fields: [episodeId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+}

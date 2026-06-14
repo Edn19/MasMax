@@ -1,0 +1,21 @@
+{
+  "name": "masmax-streaming-platform",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Catalogo web demo de streaming con React, NestJS, PostgreSQL y Prisma.",
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace apps/backend\" \"npm run dev --workspace apps/frontend\"",
+    "build": "npm run build --workspace apps/backend && npm run build --workspace apps/frontend",
+    "lint": "npm run lint --workspace apps/backend && npm run lint --workspace apps/frontend",
+    "prisma:generate": "npm run prisma:generate --workspace apps/backend",
+    "prisma:migrate": "npm run prisma:migrate --workspace apps/backend",
+    "seed": "npm run seed --workspace apps/backend"
+  },
+  "workspaces": [
+    "apps/backend",
+    "apps/frontend"
+  ],
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

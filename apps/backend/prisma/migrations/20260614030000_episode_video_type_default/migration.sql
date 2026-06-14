@@ -1,0 +1,2 @@
+ALTER TABLE "Episode"
+ALTER COLUMN "videoType" SET DEFAULT 'MP4';

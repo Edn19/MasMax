@@ -1,0 +1,15 @@
+node_modules
+dist
+build
+.env
+.env.local
+.DS_Store
+npm-debug.log*
+coverage
+uploads/*
+!uploads/videos/
+!uploads/images/
+uploads/videos/*
+uploads/images/*
+!uploads/videos/.gitkeep
+!uploads/images/.gitkeep
