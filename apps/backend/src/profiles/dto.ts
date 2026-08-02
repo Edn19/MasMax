@@ -1,0 +1,3 @@
+import { IsBoolean, IsOptional, IsString, MinLength } from 'class-validator';
+export class CreateProfileDto { @IsString() @MinLength(2) name!: string; @IsOptional() @IsString() avatarUrl?: string; @IsOptional() @IsString() preferredLanguage?: string; @IsOptional() @IsBoolean() isKids?: boolean; @IsOptional() @IsString() @MinLength(4) pin?: string; }
+export class UpdateProfileDto { @IsOptional() @IsString() @MinLength(2) name?: string; @IsOptional() @IsString() avatarUrl?: string; @IsOptional() @IsString() preferredLanguage?: string; @IsOptional() @IsBoolean() isKids?: boolean; @IsOptional() @IsString() @MinLength(4) pin?: string; }

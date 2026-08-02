@@ -1,11 +1,11 @@
-import { Film, Heart, Mail, Play, ShieldCheck, Trash2, UserCircle } from 'lucide-react';
+import { Film, Heart, Laptop, Mail, Play, ShieldCheck, Trash2, UserCircle } from 'lucide-react';
 import { EmptyState, LoadingBlock } from '../components/Layout';
 import { MovieCard } from '../components/MovieCard';
 import { SeriesCard } from '../components/SeriesCard';
 import { api, deleteJson } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useAsync } from '../lib/useAsync';
-import { Favorite, Movie, Series } from '../types/models';
+import { Favorite, Movie, Series, Session } from '../types/models';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -115,8 +115,15 @@ export function ProfilePage() {
               <p className="mt-2 font-semibold text-white">{user?.role === 'ADMIN' ? 'Administrador' : 'Usuario'}</p>
             </div>
           </div>
+          <Link to="/profile/security" className="mt-6 inline-flex items-center gap-2 rounded-xl bg-brand px-5 py-3 font-bold text-ink"><Laptop size={18}/> Seguridad y dispositivos</Link>
         </div>
       </section>
     </main>
   );
+}
+
+export function SecurityPage() {
+  const sessions = useAsync<Session[]>(() => api('/auth/sessions'), []);
+  async function revoke(id:string){try{await deleteJson(`/auth/sessions/${id}`);sessions.setData((sessions.data??[]).map((item)=>item.id===id?{...item,revokedAt:new Date().toISOString()}:item));toast.success('Sesion revocada')}catch(error){toast.error((error as Error).message)}}
+  return <main className="mx-auto min-h-[70vh] max-w-4xl px-4 py-10"><div className="flex items-center gap-3"><Laptop className="text-brand"/><div><h1 className="text-3xl font-black text-white">Seguridad y dispositivos</h1><p className="mt-1 text-slate-400">Revisa y cierra sesiones de tu cuenta.</p></div></div>{sessions.loading?<div className="mt-8"><LoadingBlock/></div>:<div className="mt-8 space-y-3">{(sessions.data??[]).map((session)=><article key={session.id} className="flex flex-col justify-between gap-4 rounded-2xl border border-line bg-panel p-5 sm:flex-row sm:items-center"><div><p className="font-bold text-white">{session.deviceName||session.userAgent?.slice(0,80)||'Dispositivo desconocido'}</p><p className="mt-1 text-sm text-slate-400">Ultimo uso: {new Date(session.lastUsedAt).toLocaleString()} · {session.ipAddress||'IP no disponible'}</p><p className={`mt-2 text-xs font-bold ${session.revokedAt?'text-coral':'text-emerald-400'}`}>{session.revokedAt?'Revocada':'Activa'}</p></div>{!session.revokedAt&&<button onClick={()=>revoke(session.id)} className="rounded-xl border border-coral/50 px-4 py-2 text-sm font-bold text-coral">Cerrar sesion</button>}</article>)}</div>}</main>;
 }

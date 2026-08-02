@@ -1,5 +1,4 @@
-import { MovieStatus, PrismaClient, Role, SeriesStatus, VideoSource, VideoType } from '@prisma/client';
-import * as bcrypt from 'bcrypt';
+import { MovieStatus, PrismaClient, SeriesStatus, VideoSource, VideoType } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -7,17 +6,10 @@ const image = (seed: string, width = 900, height = 1200) =>
   `https://picsum.photos/seed/${encodeURIComponent(seed)}/${width}/${height}`;
 
 async function main() {
-  const passwordHash = await bcrypt.hash('Admin123456', 12);
-  await prisma.user.upsert({
-    where: { email: 'admin@site.local' },
-    update: { passwordHash, role: Role.ADMIN, name: 'Administrador' },
-    create: {
-      email: 'admin@site.local',
-      name: 'Administrador',
-      role: Role.ADMIN,
-      passwordHash,
-    },
-  });
+  if (process.env.SEED_DEMO !== 'true') {
+    console.log('Contenido demo omitido porque SEED_DEMO no es true.');
+    return;
+  }
 
   await prisma.siteSetting.upsert({
     where: { id: 'default-site-setting' },

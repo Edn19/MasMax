@@ -1,5 +1,6 @@
 import { Role } from '@prisma/client';
-import { IsBoolean, IsEmail, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsBoolean, IsEmail, IsEnum, IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
 
 export class CreateUserDto {
   @IsString()
@@ -48,4 +49,11 @@ export class UpdatePasswordDto {
   @IsString()
   @MinLength(8)
   confirmPassword!: string;
+}
+
+export class CreateInvitationDto {
+  @IsOptional() @IsEmail() email?: string;
+  @IsEnum(Role) role: Role = Role.USER;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(168) expiresHours = 24;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(20) maxUses = 1;
 }

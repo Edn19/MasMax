@@ -14,12 +14,14 @@ import {
   SeriesAdminPage,
   SettingsAdminPage,
   UsersAdminPage,
+  StorageAdminPage,
+  AuditAdminPage,
 } from './admin/AdminPages';
 import { AdminRoute, ProtectedRoute } from './components/ProtectedRoute';
 import { PublicLayout } from './components/Layout';
 import { AuthProvider } from './lib/auth';
 import { SiteSettingsProvider } from './lib/site-settings';
-import { FavoritesPage, MoviesPage, ProfilePage, SeriesCatalogPage } from './pages/AccountPages';
+import { FavoritesPage, MoviesPage, ProfilePage, SecurityPage, SeriesCatalogPage } from './pages/AccountPages';
 import { HomePage } from './pages/HomePage';
 import { MovieWatchPage } from './pages/MovieWatchPage';
 import { SeriesDetailPage } from './pages/SeriesDetailPage';
@@ -41,6 +43,7 @@ const router = createBrowserRouter([
           { path: '/movies', element: <MoviesPage /> },
           { path: '/favorites', element: <FavoritesPage /> },
           { path: '/profile', element: <ProfilePage /> },
+          { path: '/profile/security', element: <SecurityPage /> },
           { path: '/watch/movie/:slug', element: <MovieWatchPage /> },
           { path: '/watch/:episodeId', element: <WatchPage /> },
         ],
@@ -61,6 +64,8 @@ const router = createBrowserRouter([
           { path: 'genres', element: <GenresAdminPage /> },
           { path: 'users', element: <UsersAdminPage /> },
           { path: 'comments', element: <CommentsAdminPage /> },
+          { path: 'storage', element: <StorageAdminPage /> },
+          { path: 'audit', element: <AuditAdminPage /> },
           { path: 'settings', element: <SettingsAdminPage /> },
           { path: 'settings/design', element: <DesignAdminPage /> },
         ],

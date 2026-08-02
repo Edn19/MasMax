@@ -20,7 +20,7 @@ export function MovieWatchPage() {
     <main className="mx-auto max-w-[1500px] px-4 py-6">
       <div className="grid gap-7 xl:grid-cols-[minmax(0,1fr)_390px]">
         <section className="min-w-0">
-          <VideoPlayer src={item.processedVideoUrl || item.videoUrl} originalSrc={item.originalVideoUrl} type={item.videoType} source={item.videoSource} poster={item.bannerUrl || item.posterUrl} />
+          <VideoPlayer src={item.processedVideoUrl || item.videoUrl} originalSrc={item.originalVideoUrl} type={item.videoType} source={item.videoSource} poster={item.bannerUrl || item.posterUrl} movieId={item.id} />
           <h1 className="mt-5 text-2xl font-black text-white sm:text-3xl">{item.title}</h1>
           <div className="mt-4 flex flex-wrap items-center justify-between gap-4 border-b border-line pb-5">
             <div className="flex flex-wrap gap-4 text-sm text-slate-400">

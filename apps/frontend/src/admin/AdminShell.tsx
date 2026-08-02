@@ -1,4 +1,4 @@
-import { ArrowLeft, BarChart3, Clapperboard, Film, MessageSquare, Palette, Settings, Tags, Users } from 'lucide-react';
+import { ArrowLeft, BarChart3, Clapperboard, Database, Film, MessageSquare, Palette, ScrollText, Settings, Tags, Users } from 'lucide-react';
 import { Link, NavLink, Outlet } from 'react-router-dom';
 import { Toaster } from 'sonner';
 
@@ -10,6 +10,8 @@ const links = [
   { to: '/admin/genres', label: 'Generos', icon: Tags },
   { to: '/admin/users', label: 'Usuarios', icon: Users },
   { to: '/admin/comments', label: 'Comentarios', icon: MessageSquare },
+  { to: '/admin/storage', label: 'Almacenamiento', icon: Database },
+  { to: '/admin/audit', label: 'Auditoria', icon: ScrollText },
   { to: '/admin/settings', label: 'Configuracion', icon: Settings, end: true },
   { to: '/admin/settings/design', label: 'Diseno del sitio', icon: Palette },
 ];

@@ -8,7 +8,7 @@ import { LoadingBlock } from '../components/Layout';
 import { MovieCard } from '../components/MovieCard';
 import { SeriesCard } from '../components/SeriesCard';
 import { useSiteSettings } from '../lib/site-settings';
-import { Favorite, Movie } from '../types/models';
+import { Favorite, Movie, WatchHistory } from '../types/models';
 
 const statusOptions = [
   { value: '', label: 'Todos' },
@@ -27,6 +27,7 @@ export function HomePage() {
   const { data: genres } = useAsync<Genre[]>(() => api('/genres'), []);
   const { data: movies } = useAsync<Movie[]>(() => api('/movies'), []);
   const { data: favorites } = useAsync<Favorite[]>(() => api('/favorites'), []);
+  const { data: continuing } = useAsync<WatchHistory[]>(() => api('/me/continue-watching?limit=10'), []);
   const settings = useSiteSettings();
 
   function submit(event: FormEvent) {
@@ -108,6 +109,16 @@ export function HomePage() {
           {(movies ?? []).slice(0, 5).map((movie) => <MovieCard key={movie.id} item={movie} />)}
         </div>
       </section>
+
+      {(continuing ?? []).length > 0 && <section className="mx-auto w-full max-w-7xl px-4 py-8" style={{ order: -1 }}>
+        <h2 className="mb-5 text-2xl font-black text-white">Continuar viendo</h2>
+        <div className="flex gap-4 overflow-x-auto pb-3">{(continuing ?? []).map((entry) => {
+          const href = entry.episode ? `/watch/${entry.episode.id}` : entry.movie ? `/watch/movie/${entry.movie.slug}` : '/home';
+          const image = entry.episode?.thumbnailUrl || entry.movie?.bannerUrl || entry.movie?.posterUrl;
+          const title = entry.episode?.title || entry.movie?.title;
+          return <Link key={entry.id} to={href} className="w-72 shrink-0 overflow-hidden rounded-xl border border-line bg-panel"><img src={image} alt={title} className="aspect-video w-full object-cover"/><div className="p-4"><h3 className="line-clamp-1 font-bold text-white">{title}</h3><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-ink"><div className="h-full bg-brand" style={{width:`${Math.min(entry.percentage,100)}%`}}/></div><p className="mt-2 text-xs text-slate-400">{Math.round(entry.percentage)} % visto</p></div></Link>;
+        })}</div>
+      </section>}
 
       {settings.showPopularSeries && (
         <section className="mx-auto w-full max-w-7xl px-4 py-8" style={{ order: order('popular') }}>

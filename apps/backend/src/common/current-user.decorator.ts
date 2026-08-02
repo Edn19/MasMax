@@ -5,6 +5,7 @@ export type JwtUser = {
   email: string;
   role: 'USER' | 'ADMIN';
   name: string;
+  sid: string;
 };
 
 export const CurrentUser = createParamDecorator((_data: unknown, ctx: ExecutionContext) => {

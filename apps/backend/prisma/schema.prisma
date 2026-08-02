@@ -40,17 +40,54 @@ enum MovieStatus {
   HIDDEN
 }
 
+enum CommentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  HIDDEN
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  SUBTITLE
+}
+
+enum MediaStatus {
+  UPLOADED
+  VALIDATING
+  QUEUED
+  PROCESSING
+  READY
+  FAILED
+}
+
 model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  passwordHash String
-  name         String
-  role         Role      @default(USER)
-  active       Boolean   @default(true)
-  comments     Comment[]
-  favorites    Favorite[]
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id                  String               @id @default(cuid())
+  email               String               @unique
+  passwordHash        String
+  name                String
+  role                Role                 @default(USER)
+  active              Boolean              @default(true)
+  failedLoginAttempts Int                  @default(0)
+  lockedUntil         DateTime?
+  emailVerifiedAt     DateTime?
+  mustChangePassword  Boolean              @default(false)
+  deletedAt           DateTime?
+  comments            Comment[]
+  favorites           Favorite[]
+  sessions            Session[]
+  profiles            Profile[]
+  watchHistory        WatchHistory[]
+  lists               ContentList[]
+  auditLogs           AuditLog[]           @relation("AuditActor")
+  invitations         Invitation[]         @relation("InvitationCreator")
+  passwordResetTokens PasswordResetToken[]
+  viewLogs            ViewLog[]
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  @@index([active, deletedAt])
 }
 
 model Series {
@@ -67,32 +104,41 @@ model Series {
   episodes    Episode[]
   genres      Genre[]      @relation("SeriesGenres")
   viewLogs    ViewLog[]
+  deletedAt   DateTime?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
+
+  @@index([title])
+  @@index([status, deletedAt])
 }
 
 model Episode {
-  id          String     @id @default(cuid())
-  seriesId    String
-  series      Series     @relation(fields: [seriesId], references: [id], onDelete: Cascade)
-  number      Int
-  title       String
-  description String
-  videoUrl    String
-  videoType   VideoType   @default(MP4)
-  videoSource VideoSource @default(URL)
-  originalVideoUrl String?
+  id                String            @id @default(cuid())
+  seriesId          String
+  series            Series            @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+  number            Int
+  title             String
+  description       String
+  videoUrl          String
+  videoType         VideoType         @default(MP4)
+  videoSource       VideoSource       @default(URL)
+  originalVideoUrl  String?
   processedVideoUrl String?
-  thumbnailUrl String?
-  publishedAt DateTime
-  views       Int        @default(0)
-  comments    Comment[]
-  favorites   Favorite[]
-  viewLogs    ViewLog[]
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  thumbnailUrl      String?
+  publishedAt       DateTime
+  views             Int               @default(0)
+  comments          Comment[]
+  favorites         Favorite[]
+  viewLogs          ViewLog[]
+  watchHistory      WatchHistory[]
+  listItems         ContentListItem[]
+  subtitles         SubtitleTrack[]
+  deletedAt         DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
 
   @@unique([seriesId, number])
+  @@index([publishedAt, deletedAt])
 }
 
 model Genre {
@@ -106,25 +152,33 @@ model Genre {
 }
 
 model Movie {
-  id                 String      @id @default(cuid())
-  title              String
-  slug               String      @unique
-  description        String
-  posterUrl          String
-  bannerUrl          String
-  videoSource        VideoSource @default(URL)
-  videoType          VideoType   @default(MP4)
-  videoUrl           String
-  originalVideoUrl   String?
-  processedVideoUrl  String?
-  duration           Int
-  releaseYear        Int
-  status             MovieStatus @default(DRAFT)
-  views              Int         @default(0)
-  genres             Genre[]     @relation("MovieGenres")
-  favorites          Favorite[]
-  createdAt          DateTime    @default(now())
-  updatedAt          DateTime    @updatedAt
+  id                String            @id @default(cuid())
+  title             String
+  slug              String            @unique
+  description       String
+  posterUrl         String
+  bannerUrl         String
+  videoSource       VideoSource       @default(URL)
+  videoType         VideoType         @default(MP4)
+  videoUrl          String
+  originalVideoUrl  String?
+  processedVideoUrl String?
+  duration          Int
+  releaseYear       Int
+  status            MovieStatus       @default(DRAFT)
+  views             Int               @default(0)
+  genres            Genre[]           @relation("MovieGenres")
+  favorites         Favorite[]
+  viewLogs          ViewLog[]
+  watchHistory      WatchHistory[]
+  listItems         ContentListItem[]
+  subtitles         SubtitleTrack[]
+  deletedAt         DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([status, createdAt])
+  @@index([title])
 }
 
 model Favorite {
@@ -143,49 +197,245 @@ model Favorite {
 }
 
 model Comment {
-  id        String   @id @default(cuid())
-  body      String
-  approved  Boolean  @default(true)
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  episodeId String
-  episode   Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
+  id              String        @id @default(cuid())
+  body            String
+  approved        Boolean       @default(true)
+  status          CommentStatus @default(APPROVED)
+  rejectionReason String?
+  reportCount     Int           @default(0)
+  updatedAt       DateTime      @updatedAt
+  deletedAt       DateTime?
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episodeId       String
+  episode         Episode       @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  createdAt       DateTime      @default(now())
+
+  @@index([status, createdAt])
 }
 
 model SiteSetting {
-  id                    String    @id @default(cuid())
-  siteName              String    @default("NovaStream")
-  logo                  String?
-  favicon               String?
-  primaryColor          String    @default("#22d3ee")
-  secondaryColor        String    @default("#fb7185")
-  colorMode             String    @default("dark")
-  heroTitle             String    @default("Historias originales para descubrir")
-  heroText              String    @default("Explora series ficticias, episodios demo y contenido original.")
-  heroImage             String?
-  featuredSeriesIds     Json      @default("[]")
-  sectionOrder          Json      @default("[\"featured\",\"latest\",\"popular\",\"genres\",\"catalog\"]")
-  showLatestEpisodes    Boolean   @default(true)
-  showPopularSeries     Boolean   @default(true)
-  showGenres            Boolean   @default(true)
-  showComments          Boolean   @default(true)
-  showFooter            Boolean   @default(true)
-  footerText            String    @default("Contenido ficticio para catalogo privado.")
-  facebook              String?
-  instagram             String?
-  youtube               String?
-  tiktok                String?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  id                 String   @id @default(cuid())
+  siteName           String   @default("NovaStream")
+  logo               String?
+  favicon            String?
+  primaryColor       String   @default("#22d3ee")
+  secondaryColor     String   @default("#fb7185")
+  colorMode          String   @default("dark")
+  heroTitle          String   @default("Historias originales para descubrir")
+  heroText           String   @default("Explora series ficticias, episodios demo y contenido original.")
+  heroImage          String?
+  featuredSeriesIds  Json     @default("[]")
+  sectionOrder       Json     @default("[\"featured\",\"latest\",\"popular\",\"genres\",\"catalog\"]")
+  showLatestEpisodes Boolean  @default(true)
+  showPopularSeries  Boolean  @default(true)
+  showGenres         Boolean  @default(true)
+  showComments       Boolean  @default(true)
+  showFooter         Boolean  @default(true)
+  footerText         String   @default("Contenido ficticio para catalogo privado.")
+  facebook           String?
+  instagram          String?
+  youtube            String?
+  tiktok             String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 }
 
 model ViewLog {
-  id        String   @id @default(cuid())
-  ip        String?
-  seriesId  String?
-  series    Series?  @relation(fields: [seriesId], references: [id], onDelete: SetNull)
+  id          String   @id @default(cuid())
+  ip          String?
+  seriesId    String?
+  series      Series?  @relation(fields: [seriesId], references: [id], onDelete: SetNull)
+  episodeId   String?
+  episode     Episode? @relation(fields: [episodeId], references: [id], onDelete: SetNull)
+  movieId     String?
+  movie       Movie?   @relation(fields: [movieId], references: [id], onDelete: SetNull)
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  profileId   String?
+  profile     Profile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  sessionId   String?
+  session     Session? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  positionSec Int?
+  durationSec Int?
+  completed   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([episodeId, createdAt])
+  @@index([movieId, createdAt])
+}
+
+model Session {
+  id               String    @id @default(cuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokenHash String
+  tokenFamily      String
+  deviceName       String?
+  userAgent        String?
+  ipAddress        String?
+  createdAt        DateTime  @default(now())
+  lastUsedAt       DateTime  @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  revocationReason String?
+  viewLogs         ViewLog[]
+
+  @@index([userId, revokedAt, expiresAt])
+  @@index([tokenFamily])
+}
+
+model Profile {
+  id                String         @id @default(cuid())
+  userId            String
+  user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name              String
+  avatarUrl         String?
+  preferredLanguage String         @default("es")
+  isKids            Boolean        @default(false)
+  pinHash           String?
+  preferences       Json           @default("{}")
+  createdAt         DateTime       @default(now())
+  lastUsedAt        DateTime       @default(now())
+  watchHistory      WatchHistory[]
+  lists             ContentList[]
+  viewLogs          ViewLog[]
+
+  @@index([userId, lastUsedAt])
+}
+
+model WatchHistory {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profileId    String?
+  profile      Profile?  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  episodeId    String?
+  episode      Episode?  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  movieId      String?
+  movie        Movie?    @relation(fields: [movieId], references: [id], onDelete: Cascade)
+  positionSec  Int       @default(0)
+  durationSec  Int       @default(0)
+  percentage   Float     @default(0)
+  playCount    Int       @default(1)
+  startedAt    DateTime  @default(now())
+  lastPlayedAt DateTime  @default(now())
+  completedAt  DateTime?
+
+  @@unique([userId, profileId, episodeId])
+  @@unique([userId, profileId, movieId])
+  @@index([userId, lastPlayedAt])
+}
+
+model ContentList {
+  id        String            @id @default(cuid())
+  userId    String
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profileId String?
+  profile   Profile?          @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  name      String
+  isPrivate Boolean           @default(true)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  items     ContentListItem[]
+
+  @@unique([userId, profileId, name])
+}
+
+model ContentListItem {
+  id        String      @id @default(cuid())
+  listId    String
+  list      ContentList @relation(fields: [listId], references: [id], onDelete: Cascade)
   episodeId String?
-  episode   Episode? @relation(fields: [episodeId], references: [id], onDelete: SetNull)
+  episode   Episode?    @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  movieId   String?
+  movie     Movie?      @relation(fields: [movieId], references: [id], onDelete: Cascade)
+  position  Int         @default(0)
+  createdAt DateTime    @default(now())
+
+  @@unique([listId, episodeId])
+  @@unique([listId, movieId])
+}
+
+model MediaFile {
+  id           String      @id @default(cuid())
+  originalName String
+  storageName  String      @unique
+  relativePath String      @unique
+  mimeType     String
+  extension    String
+  sizeBytes    BigInt
+  checksum     String?
+  mediaType    MediaType
+  status       MediaStatus @default(UPLOADED)
+  width        Int?
+  height       Int?
+  durationSec  Float?
+  bitrate      Int?
+  videoCodec   String?
+  audioCodec   String?
+  errorMessage String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([mediaType, status])
+  @@index([checksum])
+}
+
+model SubtitleTrack {
+  id        String   @id @default(cuid())
+  episodeId String?
+  episode   Episode? @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  movieId   String?
+  movie     Movie?   @relation(fields: [movieId], references: [id], onDelete: Cascade)
+  language  String
+  label     String
+  url       String
+  isDefault Boolean  @default(false)
   createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actor     User?    @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  action    String
+  entity    String
+  entityId  String?
+  ipAddress String?
+  userAgent String?
+  changes   Json?
+  requestId String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([actorId, createdAt])
+  @@index([entity, entityId])
+}
+
+model Invitation {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  email     String?
+  expiresAt DateTime
+  maxUses   Int       @default(1)
+  usedCount Int       @default(0)
+  role      Role      @default(USER)
+  creatorId String
+  creator   User      @relation("InvitationCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, expiresAt])
 }

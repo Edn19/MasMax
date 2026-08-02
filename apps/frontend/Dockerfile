@@ -9,7 +9,7 @@ ENV VITE_ALLOWED_EMBED_DOMAINS=$VITE_ALLOWED_EMBED_DOMAINS
 COPY package*.json ./
 COPY apps/backend/package.json apps/backend/package.json
 COPY apps/frontend/package.json apps/frontend/package.json
-RUN npm install --workspace apps/frontend --include-workspace-root
+RUN npm ci --workspace apps/frontend --include-workspace-root
 COPY apps/frontend ./apps/frontend
 WORKDIR /app/apps/frontend
 RUN npm run build

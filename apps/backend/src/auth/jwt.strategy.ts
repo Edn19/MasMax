@@ -11,16 +11,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: config.get<string>('JWT_SECRET') ?? 'dev_secret',
+      secretOrKey: config.getOrThrow<string>('JWT_SECRET'),
     });
   }
 
   async validate(payload: JwtUser) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: payload.sub },
-      select: { id: true, email: true, name: true, role: true, active: true },
-    });
-    if (!user?.active) return null;
-    return { sub: user.id, email: user.email, name: user.name, role: user.role };
+    const [user, session] = await Promise.all([
+      this.prisma.user.findUnique({ where: { id: payload.sub }, select: { id: true, email: true, name: true, role: true, active: true, deletedAt: true } }),
+      this.prisma.session.findFirst({ where: { id: payload.sid, userId: payload.sub, revokedAt: null, expiresAt: { gt: new Date() } }, select: { id: true } }),
+    ]);
+    if (!user?.active || user.deletedAt || !session) return null;
+    return { sub: user.id, email: user.email, name: user.name, role: user.role, sid: payload.sid };
   }
 }

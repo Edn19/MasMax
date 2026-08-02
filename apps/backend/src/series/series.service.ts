@@ -11,6 +11,7 @@ export class SeriesService {
   list(query: QuerySeriesDto) {
     const where: Prisma.SeriesWhereInput = {
       AND: [
+        { deletedAt: null },
         query.search
           ? {
               OR: [
@@ -34,7 +35,7 @@ export class SeriesService {
 
   featured() {
     return this.prisma.series.findMany({
-      where: { featured: true },
+      where: { featured: true, deletedAt: null },
       include: { genres: true },
       take: 8,
       orderBy: { updatedAt: 'desc' },
@@ -43,7 +44,7 @@ export class SeriesService {
 
   async bySlug(slug: string, ip?: string) {
     const series = await this.prisma.series.findUnique({
-      where: { slug },
+      where: { slug, deletedAt: null },
       include: { genres: true, episodes: { orderBy: { number: 'asc' } } },
     });
     if (!series) throw new NotFoundException('Serie no encontrada');
@@ -85,6 +86,6 @@ export class SeriesService {
   }
 
   remove(id: string) {
-    return this.prisma.series.delete({ where: { id } });
+    return this.prisma.series.update({ where: { id }, data: { deletedAt: new Date(), featured: false } });
   }
 }

@@ -134,6 +134,10 @@ export function DashboardPage() {
     ['Peliculas', data?.movies],
     ['Usuarios', data?.users],
     ['Vistas totales', data?.totalViews],
+    ['Usuarios activos', data?.activeUsers],
+    ['Sesiones activas', data?.activeSessions],
+    ['Comentarios pendientes', data?.pendingComments],
+    ['Archivos en proceso', data?.processingFiles],
   ];
 
   return (
@@ -584,6 +588,7 @@ export function UsersAdminPage() {
         columns={['name', 'email', 'role', 'active']}
         onEdit={edit}
         onDelete={(id) => deleteJson(`/admin/users/${id}`).then(() => users.setData((users.data ?? []).filter((item) => item.id !== id)))}
+        extraAction={(row) => <button type="button" className="rounded border border-coral px-2 py-1 text-coral" onClick={() => row.id && deleteJson<{revoked:number}>(`/admin/users/${row.id}/sessions`).then((result) => toast.success(`${result.revoked} sesiones revocadas`))}>Revocar sesiones</button>}
       />
     </Panel>
   );
@@ -711,6 +716,13 @@ export function DesignAdminPage() {
     </Panel>
   );
 }
+
+type StorageStats = { totalBytes:string;totalFiles:number;videos:number;images:number;processing:number;failed:number;orphaned:number;orphanedBytes:string;freeBytes:string };
+const formatBytes=(value:string)=>{const bytes=Number(value);if(!Number.isFinite(bytes))return value;const units=['B','KB','MB','GB','TB'];let amount=bytes;let unit=0;while(amount>=1024&&unit<units.length-1){amount/=1024;unit++}return `${amount.toFixed(unit?1:0)} ${units[unit]}`};
+export function StorageAdminPage(){const stats=useAsync<StorageStats>(()=>api('/admin/storage'),[]);async function cleanup(){if(!confirm('Se eliminaran solamente archivos huerfanos que superen el periodo de retencion. ¿Continuar?'))return;try{const result=await postJson<{removed:number}>('/admin/storage/cleanup',{});toast.success(`${result.removed} archivos eliminados`);stats.setData(await api<StorageStats>('/admin/storage'))}catch(error){toast.error((error as Error).message)}}const data=stats.data;return <Panel title="Almacenamiento">{stats.loading?<LoadingBlock/>:data&&<><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{[['Uso total',formatBytes(data.totalBytes)],['Espacio disponible',formatBytes(data.freeBytes)],['Archivos',data.totalFiles],['Huerfanos',data.orphaned],['Videos',data.videos],['Imagenes',data.images],['En proceso',data.processing],['Fallidos',data.failed]].map(([label,value])=><div key={label} className="rounded-xl border border-line bg-ink p-4"><p className="text-xs uppercase text-slate-500">{label}</p><p className="mt-2 text-2xl font-black text-white">{value}</p></div>)}</div><button onClick={cleanup} className="mt-6 rounded-lg border border-coral px-4 py-2 font-bold text-coral">Limpiar huerfanos seguros</button></>}</Panel>}
+
+type AuditEntry={id:string;action:string;entity:string;entityId?:string;ipAddress?:string;createdAt:string;actor?:{name:string;email:string}};
+export function AuditAdminPage(){const logs=useAsync<AuditEntry[]>(()=>api('/admin/audit?limit=100'),[]);return <Panel title="Auditoria">{logs.loading?<LoadingBlock/>:<AdminTable rows={logs.data??[]} columns={['createdAt','action','entity','entityId','ipAddress']} extraAction={(row)=><span className="text-xs text-slate-500">{row.actor?.email??'Sistema'}</span>}/>}</Panel>}
 
 function AdminTable<T extends { id?: string }>({
   rows,

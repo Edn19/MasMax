@@ -1,401 +1,103 @@
-# NovaStream Catalogo Streaming
+# NovaStream / MasMax
 
-Plataforma web demo tipo catalogo/streaming con diseno original, contenido ficticio y administracion privada en `/admin`.
+Plataforma privada de streaming con React, Vite, TailwindCSS, NestJS, Prisma, PostgreSQL, Nginx y Docker Compose. Incluye catálogo de series/películas, administración, favoritos, progreso, perfiles, listas, comentarios moderados y reproducción local protegida. No incluye pagos ni suscripciones comerciales.
 
-## Stack
+## Inicio rápido
 
-- Frontend: React + Vite + TypeScript + TailwindCSS
-- Backend: NestJS + TypeScript
-- Base de datos: PostgreSQL + Prisma
-- Autenticacion: JWT + bcrypt
-- Deploy local/servidor: Docker Compose
-- Reverse proxy: Nginx
-
-## Credenciales demo
-
-- Email: `admin@site.local`
-- Password: `Admin123456`
-
-## Levantar con Docker
+Requisitos: Docker Desktop en Windows o Docker Engine + Compose Plugin en Linux.
 
 ```bash
 cp .env.example .env
+# Completa POSTGRES_PASSWORD, DATABASE_URL, JWT_SECRET,
+# JWT_REFRESH_SECRET y MEDIA_SIGNING_SECRET con valores aleatorios fuertes.
 docker compose up -d --build
 ```
 
-Abrir:
+Abre `http://localhost:8088`. El backend (`3000`), PostgreSQL (`5432`) y frontend (`8080`) solo están expuestos dentro de la red Docker.
 
-- Sitio publico: `http://localhost:8088`
-- Login: `http://localhost:8088/login`
-- Inicio autenticado: `http://localhost:8088/home`
-- Panel admin: `http://localhost:8088/admin`
-- API mediante Nginx: `http://localhost:8088/api`
-- Salud de API y base de datos: `http://localhost:8088/api/health`
+## Primer administrador
 
-El proxy Nginx del proyecto usa el puerto externo `8088`, por lo que no ocupa el puerto `80`. El backend escucha en `3000` solo dentro de la red Docker. PostgreSQL tampoco publica puertos en el host.
+El arranque nunca crea ni restablece credenciales. Si no existe un administrador:
 
-El contenedor backend ejecuta `prisma migrate deploy`, crea o actualiza el usuario admin y carga datos demo inventados.
-
-## Instalacion en Windows
-
-1. Instala Docker Desktop.
-2. Abre PowerShell en la carpeta del proyecto.
-3. Crea variables de entorno:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-4. Levanta la plataforma:
-
-```powershell
-docker compose up -d --build
-```
-
-5. Revisa logs si lo necesitas:
-
-```powershell
-docker compose logs -f backend
-docker compose logs -f nginx
-docker compose logs -f frontend
-```
-
-## Instalacion en Ubuntu Server
-
-1. Instala Docker y el plugin Compose.
+1. Define temporalmente `ADMIN_EMAIL`, `ADMIN_PASSWORD` (mínimo 12 caracteres) y `ADMIN_NAME` en `.env`.
+2. Ejecuta:
 
 ```bash
-sudo apt update
-sudo apt install -y docker.io docker-compose-plugin
-sudo systemctl enable --now docker
+docker compose exec backend npm run prisma:seed:admin
 ```
 
-2. Entra al proyecto y crea `.env`.
+3. Vacía `ADMIN_PASSWORD` en `.env` después de crear la cuenta.
+
+Si ya existe un administrador, el seed es idempotente y no cambia su contraseña. El contenido ficticio es opcional:
 
 ```bash
-cp .env.example .env
+# Define SEED_DEMO=true solo mientras ejecutas este comando.
+docker compose exec backend npm run prisma:seed:demo
 ```
 
-3. Edita secretos para produccion.
+## Seguridad y sesiones
+
+- Access token corto (`15m` por defecto) mantenido en memoria del navegador.
+- Refresh token rotativo en cookie `HttpOnly`, almacenado solo como hash en PostgreSQL.
+- Cierre de sesión real y revocación por dispositivo desde `/profile/security`.
+- Bloqueo temporal tras intentos fallidos, rate limiting global, Helmet, CSP y CORS con lista permitida.
+- Videos MP4 locales bloqueados en `/uploads/videos/*`; el reproductor solicita una URL HMAC temporal y Nginx sirve el archivo mediante `X-Accel-Redirect` y una ubicación `internal`.
+- Las imágenes continúan públicas en `/uploads/images/*`.
+
+Para producción usa HTTPS mediante un proxy externo y configura `FRONTEND_URL`, `APP_PUBLIC_URL` y secretos diferentes por instalación.
+
+## Contenido y video
+
+En administración se aceptan MP4 locales de hasta 1080p y el límite `MAX_VIDEO_UPLOAD_MB`. La subida usa `multipart/form-data` con campo `file`, almacenamiento temporal, firma MP4 real, `ffprobe`, SHA-256 y registro `MediaFile`. Archivos inválidos se eliminan.
+
+También se admiten URL HTTPS MP4, HLS `.m3u8`, Google Drive público y embeds de dominios incluidos en `ALLOWED_EMBED_DOMAINS`. Drive puede bloquear reproducción por permisos o cuota; comparte el archivo como “cualquier persona con el enlace”.
+
+Los archivos locales viven en `uploads/videos`; imágenes en `uploads/images`; temporales en `uploads/tmp`. El frontend guarda progreso cada 15 segundos, al pausar y al terminar, y muestra “Continuar viendo”.
+
+La generación adaptativa HLS con FFmpeg y worker independiente está documentada como limitación actual en `docs/MEDIA_PIPELINE.md`: el reproductor sí consume HLS externo, pero esta versión no transcodifica automáticamente subidas locales.
+
+## Migraciones y actualización
 
 ```bash
-nano .env
-```
-
-4. Levanta los servicios.
-
-```bash
-sudo docker compose up -d --build
-```
-
-5. Comprueba estado.
-
-```bash
-sudo docker compose ps
-sudo docker compose logs -f backend
-```
-
-## Desarrollo local sin Docker
-
-Requisitos: Node.js 22 y PostgreSQL.
-
-```bash
-npm install
+npm ci
 npm run prisma:generate
-npm run prisma:migrate
-npm run seed
-npm run dev
+docker compose up -d --build
 ```
 
-Frontend: `http://localhost:8080`  
-Backend: `http://localhost:3001/api`
+El backend ejecuta `prisma migrate deploy` al arrancar. Nunca uses `db push` en producción. Para una instalación existente, respalda base y `uploads`, revisa `docs/DEPLOYMENT.md`, despliega y verifica `/api/health/ready`.
 
-## Endpoints principales
-
-Auth:
-
-- `POST /api/auth/login`
-- `POST /api/auth/register`
-- `GET /api/auth/me`
-
-Series:
-
-- `GET /api/series`
-- `GET /api/series/:slug`
-- `POST /api/admin/series`
-- `PATCH /api/admin/series/:id`
-- `DELETE /api/admin/series/:id`
-
-Episodes:
-
-- `GET /api/episodes/latest`
-- `GET /api/series/:slug/episodes`
-- `GET /api/episodes/:id`
-- `POST /api/admin/episodes`
-- `PATCH /api/admin/episodes/:id`
-- `DELETE /api/admin/episodes/:id`
-
-Movies:
-
-- `GET /api/movies`
-- `GET /api/movies/:slug`
-- `POST /api/admin/movies`
-- `PATCH /api/admin/movies/:id`
-- `DELETE /api/admin/movies/:id`
-
-Favorites:
-
-- `GET /api/favorites`
-- `POST /api/favorites`
-- `DELETE /api/favorites/:id`
-- `GET /api/favorites/check?episodeId=ID`
-- `GET /api/favorites/check?movieId=ID`
-
-Genres:
-
-- `GET /api/genres`
-- `POST /api/admin/genres`
-- `PATCH /api/admin/genres/:id`
-- `DELETE /api/admin/genres/:id`
-
-Comments:
-
-- `GET /api/comments/:episodeId`
-- `POST /api/comments`
-- `GET /api/admin/comments`
-- `PATCH /api/admin/comments/:id`
-- `DELETE /api/admin/comments/:id`
-
-Admin:
-
-- `GET /api/admin/stats`
-- `GET /api/admin/users`
-- `POST /api/admin/users`
-- `PATCH /api/admin/users/:id`
-- `PATCH /api/admin/users/:id/password`
-- `DELETE /api/admin/users/:id`
-- `POST /api/admin/uploads/video`
-- `POST /api/admin/uploads/image`
-- `GET /api/site-settings`
-- `PATCH /api/admin/site-settings`
-
-## Gestion de usuarios
-
-En `http://localhost:8088/admin/users` un administrador puede crear, editar, activar, desactivar y eliminar usuarios. Tambien puede cambiar email, rol y contrasena.
-
-- Las contrasenas requieren al menos 8 caracteres.
-- La nueva contrasena debe confirmarse.
-- Solo se almacena el hash bcrypt; la contrasena real nunca se devuelve.
-- Un administrador no puede desactivarse, quitarse su propio rol ni eliminar su propia cuenta.
-
-## Videos y archivos locales
-
-En `Admin > Episodios` puedes seleccionar una fuente:
-
-- `LOCAL`: sube un archivo MP4 local, incluido contenido 1080p.
-- `URL`: pega una URL HTTPS que termine en `.mp4`.
-- `HLS`: pega una URL HTTPS que termine en `.m3u8`.
-- `DRIVE`: pega un enlace publico de Google Drive.
-- `EMBED`: pega una URL HTTPS de insercion permitida.
-
-### Subir MP4 1080p
-
-1. Abre `Admin > Episodios`.
-2. Selecciona `Subir video local MP4`.
-3. Elige un archivo con extension `.mp4` y MIME `video/mp4`.
-4. Espera a que la barra llegue al 100%.
-5. Revisa el preview y guarda el episodio.
-
-El limite predeterminado es 2048 MB:
-
-```env
-MAX_VIDEO_UPLOAD_MB=2048
-```
-
-Los MP4 se guardan en `uploads/videos/` y se publican como `/uploads/videos/nombre.mp4`. Nginx admite peticiones `Range` para reproduccion progresiva y avance dentro del video.
-
-### URL MP4 externa
-
-Selecciona `URL externa MP4` y pega una direccion HTTPS directa:
-
-```text
-https://media.example.com/episodio-01.mp4
-```
-
-La URL debe comenzar con `https://` y terminar en `.mp4`.
-
-### HLS
-
-Selecciona `URL HLS .m3u8` y pega una direccion HTTPS:
-
-```text
-https://media.example.com/serie/master.m3u8
-```
-
-El reproductor usa `hls.js` en navegadores compatibles.
-
-### Google Drive
-
-Selecciona `URL de Google Drive`. Se aceptan estos formatos:
-
-```text
-https://drive.google.com/file/d/FILE_ID/view
-https://drive.google.com/open?id=FILE_ID
-https://drive.google.com/uc?id=FILE_ID
-```
-
-El backend conserva el enlace original y genera:
-
-```text
-https://drive.google.com/uc?export=download&id=FILE_ID
-https://drive.google.com/file/d/FILE_ID/preview
-```
-
-En Drive abre `Compartir > Acceso general` y selecciona `Cualquier persona con el enlace`. El reproductor intenta primero la descarga directa y, si falla, muestra el iframe preview.
-
-Google Drive puede bloquear la reproduccion por permisos, cookies, cuota o limite de ancho de banda. Si ocurre:
-
-- Confirma que el archivo sea publico.
-- Abre el enlace en una ventana privada.
-- Espera si Drive indica exceso de descargas.
-- Para trafico estable usa almacenamiento/CDN diseñado para streaming.
-
-### Embeds
-
-Usa URLs de reproductor, por ejemplo `https://www.youtube-nocookie.com/embed/ID`, no la URL normal de la pagina.
-
-Los proveedores embed permitidos se configuran con:
-
-```env
-ALLOWED_EMBED_DOMAINS=youtube.com,player.vimeo.com,drive.google.com
-```
-
-Los archivos quedan persistidos en:
-
-```text
-uploads/videos/
-uploads/images/
-```
-
-Nginx monta esta carpeta en modo lectura y la publica en `/uploads/`. No la elimines al recrear contenedores.
-
-## Peliculas
-
-En `http://localhost:8088/admin/movies` un administrador puede crear, editar y eliminar peliculas. El formulario permite subir portada, banner y MP4 local 1080p, o usar URL MP4, HLS, Google Drive y embeds permitidos.
-
-Estados disponibles:
-
-- `DRAFT`: visible solo en administración.
-- `PUBLISHED`: visible en `/movies` y Home.
-- `HIDDEN`: oculta del catálogo público.
-
-El botón `Volver a Home` del panel conserva la sesión activa.
-
-## Favoritos y reproductor
-
-Usuarios y administradores pueden agregar episodios o películas a favoritos desde el botón de corazón bajo el reproductor. Los favoritos se almacenan por usuario y no se duplican.
-
-La ruta `/favorites` muestra películas y episodios guardados, con opciones para reproducirlos o quitarlos.
-
-Los reproductores de episodios y películas incluyen:
-
-- Video responsive con pantalla completa mediante controles nativos.
-- Título, descripción y fecha o año.
-- Botón de favoritos.
-- Recomendaciones laterales en escritorio y debajo en móvil.
-- Episodio anterior y siguiente para series.
-
-## Diseno del sitio
-
-En `http://localhost:8088/admin/settings/design` puedes editar nombre, logo, favicon, colores, modo claro/oscuro, hero, series destacadas, orden y visibilidad de secciones, comentarios y footer.
-
-## Login administrativo
-
-Abre:
-
-```text
-http://localhost:8088/login
-```
-
-Credenciales:
-
-```text
-admin@site.local
-Admin123456
-```
-
-Al iniciar sesion correctamente, el navegador guarda el token JWT y los datos basicos del usuario, valida la sesion mediante `/api/auth/me` y redirige a `/home`. Las cuentas sin rol `ADMIN` reciben una pantalla de acceso denegado si intentan abrir `/admin`.
-
-La ruta `/` abre el login. Tanto usuarios normales como administradores son redirigidos a `/home` después de autenticarse. El contenido requiere una sesión válida:
-
-- `/home`: inicio y catálogo.
-- `/series`: listado de series.
-- `/movies`: sección de películas.
-- `/favorites`: favoritos.
-- `/profile`: datos de la cuenta.
-- `/watch/:episodeId`: reproductor.
-- `/admin`: exclusivo para cuentas con rol `ADMIN`.
-
-Logs de diagnostico:
+## Desarrollo y calidad
 
 ```bash
-docker compose logs -f nginx
-docker compose logs -f backend
-docker compose logs -f frontend
+npm ci
+npm run prisma:generate
+npm run lint
+npm run typecheck
+npm run test
+npm run build
+npm audit --omit=dev
+npx prisma format --schema apps/backend/prisma/schema.prisma
+npx prisma validate --schema apps/backend/prisma/schema.prisma
 ```
 
-## Backups
-
-Backup de uploads:
+## Respaldo y restauración
 
 ```bash
-tar -czf masmax-uploads.tar.gz uploads/
+sh scripts/backup.sh
+sh scripts/restore.sh backups/database-AAAAMMDD-HHMMSS.dump backups/uploads-AAAAMMDD-HHMMSS.tar.gz
 ```
 
-En Windows:
+Un respaldo no se considera válido hasta probar su restauración. Consulta `docs/BACKUP_AND_RESTORE.md`.
 
-```powershell
-Compress-Archive -Path uploads -DestinationPath masmax-uploads.zip
-```
-
-Backup de PostgreSQL:
+## Diagnóstico
 
 ```bash
-docker compose exec -T postgres pg_dump -U masmax masmax > masmax-database.sql
+docker compose ps
+docker compose logs --tail=200 backend
+docker compose logs --tail=200 nginx
+docker compose logs --tail=200 frontend
+curl http://localhost:8088/api/health/live
+curl http://localhost:8088/api/health/ready
 ```
 
-Restaurar PostgreSQL:
-
-```bash
-docker compose exec -T postgres psql -U masmax masmax < masmax-database.sql
-```
-
-En PowerShell puedes copiar `uploads` normalmente y generar el dump así:
-
-```powershell
-docker compose exec -T postgres pg_dump -U masmax masmax | Out-File -Encoding utf8 masmax-database.sql
-```
-
-## Seguridad incluida
-
-- JWT en rutas privadas.
-- Guard para rol `ADMIN` en `/api/admin/*`.
-- Validacion con `class-validator`.
-- Hash de passwords con `bcrypt`.
-- CORS configurable desde `.env`.
-- Panel `/admin` bloqueado si no hay token admin.
-
-## Estructura
-
-```text
-apps/
-  backend/     NestJS, Prisma, JWT, REST API
-  frontend/    React, Vite, TailwindCSS
-nginx/         Reverse proxy principal
-docker-compose.yml
-.env.example
-```
-
-## Notas de contenido
-
-Los nombres, descripciones e imagenes son demo. No se incluye contenido real con copyright ni marca de terceros.
+Documentación: `docs/TECHNICAL_AUDIT.md`, `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/MEDIA_PIPELINE.md`, `docs/API.md`, `docs/DEPLOYMENT.md` y `docs/BACKUP_AND_RESTORE.md`.

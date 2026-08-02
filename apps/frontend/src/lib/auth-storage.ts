@@ -1,57 +1,13 @@
 import { User } from '../types/models';
 
-const ACCESS_TOKEN_KEY = 'accessToken';
-const REFRESH_TOKEN_KEY = 'refreshToken';
+let accessToken: string | null = null;
 const USER_KEY = 'user';
-const USER_ID_KEY = 'user.id';
-const USER_EMAIL_KEY = 'user.email';
-const USER_ROLE_KEY = 'user.role';
 
-export function getAccessToken() {
-  return localStorage.getItem(ACCESS_TOKEN_KEY) ?? localStorage.getItem('token');
-}
-
-export function setAccessToken(token: string | null) {
-  if (token) {
-    localStorage.setItem(ACCESS_TOKEN_KEY, token);
-    localStorage.removeItem('token');
-  } else {
-    localStorage.removeItem(ACCESS_TOKEN_KEY);
-    localStorage.removeItem('token');
-  }
-}
-
-export function setRefreshToken(token?: string | null) {
-  if (token) localStorage.setItem(REFRESH_TOKEN_KEY, token);
-  else localStorage.removeItem(REFRESH_TOKEN_KEY);
-}
-
-export function setStoredUser(user: User | null) {
-  if (!user) {
-    localStorage.removeItem(USER_KEY);
-    localStorage.removeItem(USER_ID_KEY);
-    localStorage.removeItem(USER_EMAIL_KEY);
-    localStorage.removeItem(USER_ROLE_KEY);
-    return;
-  }
-
-  const userId = user.id ?? user.sub ?? '';
-  localStorage.setItem(USER_KEY, JSON.stringify(user));
-  localStorage.setItem(USER_ID_KEY, userId);
-  localStorage.setItem(USER_EMAIL_KEY, user.email);
-  localStorage.setItem(USER_ROLE_KEY, user.role);
-}
-
-export function isAuthenticated() {
-  return Boolean(getAccessToken());
-}
-
-export function isAdmin() {
-  return isAuthenticated() && localStorage.getItem(USER_ROLE_KEY) === 'ADMIN';
-}
-
-export function logout() {
-  setAccessToken(null);
-  setRefreshToken(null);
-  setStoredUser(null);
-}
+export function getAccessToken() { return accessToken; }
+export function setAccessToken(token: string | null) { accessToken = token; localStorage.removeItem('accessToken'); localStorage.removeItem('token'); }
+export function setRefreshToken(_token?: string | null) { localStorage.removeItem('refreshToken'); }
+export function getStoredUser(): User | null { try { const value = localStorage.getItem(USER_KEY); return value ? JSON.parse(value) as User : null; } catch { return null; } }
+export function setStoredUser(user: User | null) { if (user) localStorage.setItem(USER_KEY, JSON.stringify(user)); else localStorage.removeItem(USER_KEY); localStorage.removeItem('user.id'); localStorage.removeItem('user.email'); localStorage.removeItem('user.role'); }
+export function isAuthenticated() { return Boolean(accessToken); }
+export function isAdmin() { return getStoredUser()?.role === 'ADMIN' && isAuthenticated(); }
+export function logout() { setAccessToken(null); setRefreshToken(null); setStoredUser(null); }

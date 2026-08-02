@@ -2,9 +2,11 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-masmax}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-masmax_password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD es obligatorio}
       POSTGRES_DB: ${POSTGRES_DB:-masmax}
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -21,10 +23,16 @@ services:
       context: .
       dockerfile: apps/backend/Dockerfile
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql://masmax:masmax_password@postgres:5432/masmax?schema=public}
-      JWT_SECRET: ${JWT_SECRET:-change_this_secret_in_production}
-      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL es obligatorio}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET es obligatorio}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET es obligatorio}
+      JWT_ACCESS_EXPIRES_IN: ${JWT_ACCESS_EXPIRES_IN:-15m}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-30d}
+      MEDIA_SIGNING_SECRET: ${MEDIA_SIGNING_SECRET:?MEDIA_SIGNING_SECRET es obligatorio}
+      MEDIA_URL_EXPIRES_SECONDS: ${MEDIA_URL_EXPIRES_SECONDS:-300}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8088,http://localhost:8080}
       PORT: 3000
       SITE_NAME: ${SITE_NAME:-NovaStream}
@@ -32,6 +40,18 @@ services:
       UPLOAD_MAX_MB: ${UPLOAD_MAX_MB:-20}
       MAX_VIDEO_UPLOAD_MB: ${MAX_VIDEO_UPLOAD_MB:-2048}
       ALLOWED_EMBED_DOMAINS: ${ALLOWED_EMBED_DOMAINS:-youtube.com,player.vimeo.com,drive.google.com}
+      REGISTRATION_MODE: ${REGISTRATION_MODE:-disabled}
+      LOGIN_MAX_ATTEMPTS: ${LOGIN_MAX_ATTEMPTS:-5}
+      LOGIN_LOCK_MINUTES: ${LOGIN_LOCK_MINUTES:-15}
+      RATE_LIMIT_TTL_SECONDS: ${RATE_LIMIT_TTL_SECONDS:-60}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-100}
+      COMMENTS_REQUIRE_APPROVAL: ${COMMENTS_REQUIRE_APPROVAL:-true}
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-http://localhost:8088}
+      MAX_PROFILES_PER_USER: ${MAX_PROFILES_PER_USER:-5}
+      CONTINUE_WATCHING_MAX_PERCENT: ${CONTINUE_WATCHING_MAX_PERCENT:-95}
+      ORPHAN_RETENTION_DAYS: ${ORPHAN_RETENTION_DAYS:-7}
+      NODE_ENV: ${NODE_ENV:-production}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
     depends_on:
       postgres:
         condition: service_healthy
@@ -39,7 +59,9 @@ services:
       - "3000"
     volumes:
       - ./uploads:/app/uploads
-    command: sh -c "npx prisma migrate deploy && node dist/prisma/seed.js && node dist/main.js"
+    command: sh -c "/app/node_modules/.bin/prisma migrate deploy && node dist/main.js"
+    tmpfs:
+      - /tmp:size=256m
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 10s
@@ -56,6 +78,8 @@ services:
         VITE_MAX_VIDEO_UPLOAD_MB: ${MAX_VIDEO_UPLOAD_MB:-2048}
         VITE_ALLOWED_EMBED_DOMAINS: ${ALLOWED_EMBED_DOMAINS:-youtube.com,player.vimeo.com,drive.google.com}
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     expose:
       - "8080"
     healthcheck:
@@ -67,6 +91,8 @@ services:
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "8088:80"
     depends_on:

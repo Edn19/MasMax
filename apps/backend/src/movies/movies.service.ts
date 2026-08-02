@@ -11,7 +11,7 @@ export class MoviesService {
 
   listPublished() {
     return this.prisma.movie.findMany({
-      where: { status: MovieStatus.PUBLISHED },
+      where: { status: MovieStatus.PUBLISHED, deletedAt: null },
       include: { genres: true },
       orderBy: { createdAt: 'desc' },
     });
@@ -26,7 +26,7 @@ export class MoviesService {
 
   async bySlug(slug: string) {
     const movie = await this.prisma.movie.findFirst({
-      where: { slug, status: MovieStatus.PUBLISHED },
+      where: { slug, status: MovieStatus.PUBLISHED, deletedAt: null },
       include: { genres: true },
     });
     if (!movie) throw new NotFoundException('Pelicula no encontrada');
@@ -36,7 +36,7 @@ export class MoviesService {
 
   recommendations(id: string) {
     return this.prisma.movie.findMany({
-      where: { id: { not: id }, status: MovieStatus.PUBLISHED },
+      where: { id: { not: id }, status: MovieStatus.PUBLISHED, deletedAt: null },
       include: { genres: true },
       orderBy: [{ views: 'desc' }, { createdAt: 'desc' }],
       take: 12,
@@ -101,7 +101,7 @@ export class MoviesService {
 
   async remove(id: string) {
     try {
-      return await this.prisma.movie.delete({ where: { id }, select: { id: true } });
+      return await this.prisma.movie.update({ where: { id }, data: { deletedAt: new Date(), status: MovieStatus.HIDDEN }, select: { id: true } });
     } catch (error) {
       this.handlePrismaError(error);
     }

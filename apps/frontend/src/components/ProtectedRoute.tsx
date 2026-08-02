@@ -15,8 +15,8 @@ function SessionLoading() {
 export function ProtectedRoute() {
   const { user, loading } = useAuth();
 
-  if (!isAuthenticated()) return <Navigate to="/login" replace />;
   if (loading) return <SessionLoading />;
+  if (!isAuthenticated()) return <Navigate to="/login" replace />;
   if (!user) return <Navigate to="/login" replace />;
   return <Outlet />;
 }
@@ -25,8 +25,8 @@ export function AdminRoute() {
   const { user, loading, logout } = useAuth();
   const navigate = useNavigate();
 
-  if (!isAuthenticated()) return <Navigate to="/login" replace />;
   if (loading) return <SessionLoading />;
+  if (!isAuthenticated()) return <Navigate to="/login" replace />;
   if (!user) return <Navigate to="/login" replace />;
 
   if (user.role !== 'ADMIN') {

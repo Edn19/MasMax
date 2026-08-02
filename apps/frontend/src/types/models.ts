@@ -97,7 +97,15 @@ export type Stats = {
   movies: number;
   users: number;
   totalViews: number;
+  activeUsers?: number;
+  activeSessions?: number;
+  pendingComments?: number;
+  processingFiles?: number;
 };
+
+export type WatchHistory = { id:string;episodeId?:string;movieId?:string;positionSec:number;durationSec:number;percentage:number;completedAt?:string;lastPlayedAt:string;episode?:Episode;movie?:Movie };
+export type Session = { id:string;deviceName?:string;userAgent?:string;ipAddress?:string;createdAt:string;lastUsedAt:string;expiresAt:string;revokedAt?:string;revocationReason?:string };
+export type Profile = { id:string;name:string;avatarUrl?:string;preferredLanguage:string;isKids:boolean;createdAt:string;lastUsedAt:string };
 
 export type SiteSetting = {
   id: string;

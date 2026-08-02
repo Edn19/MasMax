@@ -19,6 +19,7 @@ export class EpisodesService {
 
   latest() {
     return this.prisma.episode.findMany({
+      where: { deletedAt: null },
       include: { series: { include: { genres: true } } },
       orderBy: { publishedAt: 'desc' },
       take: 24,
@@ -29,14 +30,14 @@ export class EpisodesService {
     const series = await this.prisma.series.findUnique({ where: { slug } });
     if (!series) throw new NotFoundException('Serie no encontrada');
     return this.prisma.episode.findMany({
-      where: { seriesId: series.id },
+      where: { seriesId: series.id, deletedAt: null },
       orderBy: { number: 'asc' },
     });
   }
 
   async byId(id: string, ip?: string) {
     const episode = await this.prisma.episode.findUnique({
-      where: { id },
+      where: { id, deletedAt: null },
       include: { series: { include: { genres: true } } },
     });
     if (!episode) throw new NotFoundException('Episodio no encontrado');
@@ -117,7 +118,7 @@ export class EpisodesService {
   }
 
   remove(id: string) {
-    return this.prisma.episode.delete({ where: { id } });
+    return this.prisma.episode.update({ where: { id }, data: { deletedAt: new Date() } });
   }
 
   private handlePrismaError(error: unknown, action: string): never {

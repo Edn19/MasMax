@@ -1,5 +1,14 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { validateEnvironment } from './common/config';
+import { AuditModule } from './audit/audit.module';
+import { MediaModule } from './media/media.module';
+import { HistoryModule } from './history/history.module';
+import { ProfilesModule } from './profiles/profiles.module';
+import { ListsModule } from './lists/lists.module';
+import { SearchModule } from './search/search.module';
 import { AdminModule } from './admin/admin.module';
 import { AuthModule } from './auth/auth.module';
 import { CommentsModule } from './comments/comments.module';
@@ -16,7 +25,12 @@ import { UploadsModule } from './uploads/uploads.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({ isGlobal: true, validate: validateEnvironment }),
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => [{ ttl: Number(config.get<string>('RATE_LIMIT_TTL_SECONDS') ?? 60) * 1000, limit: Number(config.get<string>('RATE_LIMIT_MAX') ?? 100) }],
+    }),
+    AuditModule,
     PrismaModule,
     AuthModule,
     SeriesModule,
@@ -29,7 +43,13 @@ import { UploadsModule } from './uploads/uploads.module';
     UploadsModule,
     SettingsModule,
     AdminModule,
+    MediaModule,
+    HistoryModule,
+    ProfilesModule,
+    ListsModule,
+    SearchModule,
   ],
   controllers: [HealthController],
+  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}
