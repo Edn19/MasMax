@@ -12,6 +12,7 @@ import { GlobalExceptionFilter } from './common/http-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  app.set('trust proxy', 1);
   const config = app.get(ConfigService);
 
   app.setGlobalPrefix('api');

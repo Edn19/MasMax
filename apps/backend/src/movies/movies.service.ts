@@ -1,9 +1,12 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { MovieStatus, Prisma } from '@prisma/client';
-import { normalizeVideo } from '../common/video';
+import { MediaStatus, MovieStatus, Prisma, VideoSource } from '@prisma/client';
+import { NormalizedVideo, normalizeVideo } from '../common/video';
+import { validatePlaybackMarkers } from '../common/playback-markers';
 import { toSlug } from '../common/slug';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateMovieDto, UpdateMovieDto } from './dto';
+import { toCatalogResponse } from '../common/catalog-response';
+import { publishedMovieWhere } from '../common/content-visibility';
 
 @Injectable()
 export class MoviesService {
@@ -11,40 +14,43 @@ export class MoviesService {
 
   listPublished() {
     return this.prisma.movie.findMany({
-      where: { status: MovieStatus.PUBLISHED, deletedAt: null },
-      include: { genres: true },
+      where: publishedMovieWhere(),
+      include: { genres: true, subtitles: { where: { isActive: true }, orderBy: [{ isDefault: 'desc' }, { language: 'asc' }] } },
       orderBy: { createdAt: 'desc' },
-    });
+    }).then(toCatalogResponse);
   }
 
   listAdmin() {
     return this.prisma.movie.findMany({
-      include: { genres: true },
+      where: { deletedAt: null },
+      include: { genres: true, subtitles: true },
       orderBy: { updatedAt: 'desc' },
     });
   }
 
   async bySlug(slug: string) {
     const movie = await this.prisma.movie.findFirst({
-      where: { slug, status: MovieStatus.PUBLISHED, deletedAt: null },
-      include: { genres: true },
+      where: publishedMovieWhere({ slug }),
+      include: { genres: true, subtitles: { where: { isActive: true }, orderBy: [{ isDefault: 'desc' }, { language: 'asc' }] } },
     });
     if (!movie) throw new NotFoundException('Pelicula no encontrada');
     await this.prisma.movie.update({ where: { id: movie.id }, data: { views: { increment: 1 } } });
-    return movie;
+    return toCatalogResponse(movie);
   }
 
   recommendations(id: string) {
     return this.prisma.movie.findMany({
-      where: { id: { not: id }, status: MovieStatus.PUBLISHED, deletedAt: null },
+      where: publishedMovieWhere({ id: { not: id } }),
       include: { genres: true },
       orderBy: [{ views: 'desc' }, { createdAt: 'desc' }],
       take: 12,
-    });
+    }).then(toCatalogResponse);
   }
 
   async create(dto: CreateMovieDto) {
     const video = normalizeVideo(dto);
+    await this.assertLocalReady(video);
+    validatePlaybackMarkers(dto, dto.duration * 60);
     try {
       return await this.prisma.movie.create({
         data: {
@@ -55,6 +61,10 @@ export class MoviesService {
           bannerUrl: dto.bannerUrl.trim(),
           ...video,
           duration: dto.duration,
+          introStartSec: dto.introStartSec,
+          introEndSec: dto.introEndSec,
+          recapStartSec: dto.recapStartSec,
+          recapEndSec: dto.recapEndSec,
           releaseYear: dto.releaseYear,
           status: dto.status as MovieStatus,
           genres: { connect: dto.genreIds.map((id) => ({ id })) },
@@ -76,6 +86,9 @@ export class MoviesService {
       originalVideoUrl: dto.originalVideoUrl ?? current.originalVideoUrl,
       processedVideoUrl: dto.processedVideoUrl ?? current.processedVideoUrl,
     });
+    await this.assertLocalReady(video);
+    const markers = { introStartSec: dto.introStartSec !== undefined ? dto.introStartSec : current.introStartSec, introEndSec: dto.introEndSec !== undefined ? dto.introEndSec : current.introEndSec, recapStartSec: dto.recapStartSec !== undefined ? dto.recapStartSec : current.recapStartSec, recapEndSec: dto.recapEndSec !== undefined ? dto.recapEndSec : current.recapEndSec };
+    validatePlaybackMarkers(markers, (dto.duration ?? current.duration) * 60);
 
     try {
       return await this.prisma.movie.update({
@@ -88,6 +101,10 @@ export class MoviesService {
           bannerUrl: dto.bannerUrl?.trim(),
           ...video,
           duration: dto.duration,
+          introStartSec: dto.introStartSec,
+          introEndSec: dto.introEndSec,
+          recapStartSec: dto.recapStartSec,
+          recapEndSec: dto.recapEndSec,
           releaseYear: dto.releaseYear,
           status: dto.status as MovieStatus | undefined,
           genres: dto.genreIds ? { set: dto.genreIds.map((genreId) => ({ id: genreId })) } : undefined,
@@ -114,5 +131,12 @@ export class MoviesService {
       if (error.code === 'P2025') throw new NotFoundException('Pelicula no encontrada');
     }
     throw error;
+  }
+
+  private async assertLocalReady(video: NormalizedVideo) {
+    if (video.videoSource !== VideoSource.LOCAL) return;
+    const match = /^\/(?:uploads|api\/storage\/objects)\/(.+)$/.exec(video.videoUrl);
+    const media = match ? await this.prisma.mediaFile.findUnique({ where: { relativePath: match[1] }, select: { status: true } }) : null;
+    if (!media || media.status !== MediaStatus.READY) throw new ConflictException('El video local aun no termino de procesarse');
   }
 }

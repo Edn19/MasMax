@@ -53,6 +53,11 @@ enum MediaType {
   SUBTITLE
 }
 
+enum SubtitleFormat {
+  VTT
+  SRT
+}
+
 enum MediaStatus {
   UPLOADED
   VALIDATING
@@ -60,6 +65,25 @@ enum MediaStatus {
   PROCESSING
   READY
   FAILED
+  DELETED
+}
+
+enum ResumableUploadStatus {
+  INITIATED
+  UPLOADING
+  ASSEMBLING
+  COMPLETED
+  CANCELLED
+  EXPIRED
+  FAILED
+}
+
+enum VideoProcessingStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
 }
 
 model User {
@@ -84,6 +108,8 @@ model User {
   invitations         Invitation[]         @relation("InvitationCreator")
   passwordResetTokens PasswordResetToken[]
   viewLogs            ViewLog[]
+  resumableUploads    ResumableUpload[]
+  videoProcessingJobs VideoProcessingJob[]
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
 
@@ -102,6 +128,7 @@ model Series {
   views       Int          @default(0)
   featured    Boolean      @default(false)
   episodes    Episode[]
+  seasons     Season[]
   genres      Genre[]      @relation("SeriesGenres")
   viewLogs    ViewLog[]
   deletedAt   DateTime?
@@ -112,11 +139,32 @@ model Series {
   @@index([status, deletedAt])
 }
 
+model Season {
+  id          String    @id @default(cuid())
+  seriesId    String
+  series      Series    @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+  number      Int
+  title       String
+  description String    @default("")
+  posterUrl   String?
+  published   Boolean   @default(false)
+  episodes    Episode[]
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([seriesId, number])
+  @@index([seriesId, published, deletedAt])
+}
+
 model Episode {
   id                String            @id @default(cuid())
   seriesId          String
   series            Series            @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+  seasonId          String
+  season            Season            @relation(fields: [seasonId], references: [id], onDelete: Restrict)
   number            Int
+  position          Int               @default(0)
   title             String
   description       String
   videoUrl          String
@@ -125,6 +173,12 @@ model Episode {
   originalVideoUrl  String?
   processedVideoUrl String?
   thumbnailUrl      String?
+  durationSec       Int?
+  introStartSec     Int?
+  introEndSec       Int?
+  recapStartSec     Int?
+  recapEndSec       Int?
+  published         Boolean           @default(true)
   publishedAt       DateTime
   views             Int               @default(0)
   comments          Comment[]
@@ -137,7 +191,9 @@ model Episode {
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
-  @@unique([seriesId, number])
+  @@unique([seasonId, number])
+  @@index([seasonId, position, deletedAt])
+  @@index([seriesId, published, deletedAt])
   @@index([publishedAt, deletedAt])
 }
 
@@ -164,6 +220,10 @@ model Movie {
   originalVideoUrl  String?
   processedVideoUrl String?
   duration          Int
+  introStartSec     Int?
+  introEndSec       Int?
+  recapStartSec     Int?
+  recapEndSec       Int?
   releaseYear       Int
   status            MovieStatus       @default(DRAFT)
   views             Int               @default(0)
@@ -216,6 +276,7 @@ model Comment {
 
 model SiteSetting {
   id                 String   @id @default(cuid())
+  key                String   @default("default") @unique
   siteName           String   @default("NovaStream")
   logo               String?
   favicon            String?
@@ -264,6 +325,7 @@ model ViewLog {
   @@index([userId, createdAt])
   @@index([episodeId, createdAt])
   @@index([movieId, createdAt])
+  @@index([createdAt])
 }
 
 model Session {
@@ -284,6 +346,7 @@ model Session {
 
   @@index([userId, revokedAt, expiresAt])
   @@index([tokenFamily])
+  @@index([lastUsedAt])
 }
 
 model Profile {
@@ -359,16 +422,16 @@ model ContentListItem {
 }
 
 model MediaFile {
-  id           String      @id @default(cuid())
+  id           String               @id @default(cuid())
   originalName String
-  storageName  String      @unique
-  relativePath String      @unique
+  storageName  String               @unique
+  relativePath String               @unique
   mimeType     String
   extension    String
   sizeBytes    BigInt
   checksum     String?
   mediaType    MediaType
-  status       MediaStatus @default(UPLOADED)
+  status       MediaStatus          @default(UPLOADED)
   width        Int?
   height       Int?
   durationSec  Float?
@@ -376,24 +439,88 @@ model MediaFile {
   videoCodec   String?
   audioCodec   String?
   errorMessage String?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  inputJobs    VideoProcessingJob[] @relation("ProcessingInput")
+  outputJob    VideoProcessingJob?  @relation("ProcessingOutput")
 
   @@index([mediaType, status])
   @@index([checksum])
+  @@index([status, createdAt])
+}
+
+model VideoProcessingJob {
+  id                String                @id @default(cuid())
+  requestedById     String
+  requestedBy       User                  @relation(fields: [requestedById], references: [id], onDelete: Cascade)
+  inputMediaFileId  String
+  inputMediaFile    MediaFile             @relation("ProcessingInput", fields: [inputMediaFileId], references: [id], onDelete: Restrict)
+  outputMediaFileId String?               @unique
+  outputMediaFile   MediaFile?            @relation("ProcessingOutput", fields: [outputMediaFileId], references: [id], onDelete: SetNull)
+  queueJobId        String?               @unique
+  status            VideoProcessingStatus @default(QUEUED)
+  progress          Int                   @default(0)
+  sourceWidth       Int?
+  sourceHeight      Int?
+  durationSec       Float?
+  profiles          Int[]                 @default([])
+  masterPath        String?
+  thumbnailPath     String?
+  retainOriginal    Boolean               @default(true)
+  cancelRequested   Boolean               @default(false)
+  attempts          Int                   @default(0)
+  errorMessage      String?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  @@index([status, createdAt])
+  @@index([requestedById, createdAt])
+  @@index([inputMediaFileId, createdAt])
+}
+
+model ResumableUpload {
+  id            String                @id @default(cuid())
+  userId        String
+  user          User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  originalName  String
+  mimeType      String
+  sizeBytes     BigInt
+  chunkSize     Int
+  totalChunks   Int
+  uploadedParts Int[]                 @default([])
+  checksum      String?
+  status        ResumableUploadStatus @default(INITIATED)
+  result        Json?
+  errorMessage  String?
+  expiresAt     DateTime
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  @@index([userId, status, updatedAt])
+  @@index([expiresAt, status])
 }
 
 model SubtitleTrack {
-  id        String   @id @default(cuid())
-  episodeId String?
-  episode   Episode? @relation(fields: [episodeId], references: [id], onDelete: Cascade)
-  movieId   String?
-  movie     Movie?   @relation(fields: [movieId], references: [id], onDelete: Cascade)
-  language  String
-  label     String
-  url       String
-  isDefault Boolean  @default(false)
-  createdAt DateTime @default(now())
+  id           String         @id @default(cuid())
+  episodeId    String?
+  episode      Episode?       @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  movieId      String?
+  movie        Movie?         @relation(fields: [movieId], references: [id], onDelete: Cascade)
+  language     String
+  label        String
+  url          String
+  originalName String         @default("")
+  sourceFormat SubtitleFormat @default(VTT)
+  isDefault    Boolean        @default(false)
+  isForced     Boolean        @default(false)
+  isActive     Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([episodeId, isActive])
+  @@index([movieId, isActive])
 }
 
 model AuditLog {
@@ -406,10 +533,14 @@ model AuditLog {
   ipAddress String?
   userAgent String?
   changes   Json?
+  before    Json?
+  after     Json?
+  metadata  Json?
   requestId String?
   createdAt DateTime @default(now())
 
   @@index([createdAt])
+  @@index([action, createdAt])
   @@index([actorId, createdAt])
   @@index([entity, entityId])
 }

@@ -4,6 +4,7 @@ export type RequestWithContext = Request & { requestId?: string };
 
 export function anonymizeIp(ip?: string) {
   if (!ip) return undefined;
+  if (ip.startsWith('::ffff:')) return anonymizeIp(ip.slice(7));
   if (ip.includes(':')) return `${ip.split(':').slice(0, 4).join(':')}::/64`;
   const parts = ip.split('.');
   return parts.length === 4 ? `${parts[0]}.${parts[1]}.${parts[2]}.0/24` : undefined;

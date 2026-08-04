@@ -13,6 +13,10 @@ export class CreateMovieDto {
   @IsOptional() @IsString() originalVideoUrl?: string;
   @IsOptional() @IsString() processedVideoUrl?: string;
   @Type(() => Number) @IsInt() @Min(1) duration!: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) introStartSec?: number | null;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) introEndSec?: number | null;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) recapStartSec?: number | null;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) recapEndSec?: number | null;
   @Type(() => Number) @IsInt() @Min(1900) @Max(2200) releaseYear!: number;
   @IsArray() @IsString({ each: true }) genreIds!: string[];
   @IsIn(['DRAFT', 'PUBLISHED', 'HIDDEN']) status!: 'DRAFT' | 'PUBLISHED' | 'HIDDEN';
@@ -30,6 +34,10 @@ export class UpdateMovieDto {
   @IsOptional() @IsString() originalVideoUrl?: string;
   @IsOptional() @IsString() processedVideoUrl?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) duration?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) introStartSec?: number | null;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) introEndSec?: number | null;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) recapStartSec?: number | null;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) recapEndSec?: number | null;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1900) @Max(2200) releaseYear?: number;
   @IsOptional() @IsArray() @IsString({ each: true }) genreIds?: string[];
   @IsOptional() @IsIn(['DRAFT', 'PUBLISHED', 'HIDDEN']) status?: 'DRAFT' | 'PUBLISHED' | 'HIDDEN';

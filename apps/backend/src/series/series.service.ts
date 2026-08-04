@@ -3,15 +3,16 @@ import { Prisma, SeriesStatus } from '@prisma/client';
 import { toSlug } from '../common/slug';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSeriesDto, QuerySeriesDto, UpdateSeriesDto } from './dto';
+import { toCatalogResponse } from '../common/catalog-response';
+import { publishedEpisodeWhere, publishedSeriesWhere } from '../common/content-visibility';
 
 @Injectable()
 export class SeriesService {
   constructor(private readonly prisma: PrismaService) {}
 
   list(query: QuerySeriesDto) {
-    const where: Prisma.SeriesWhereInput = {
+    const where: Prisma.SeriesWhereInput = publishedSeriesWhere({
       AND: [
-        { deletedAt: null },
         query.search
           ? {
               OR: [
@@ -21,38 +22,60 @@ export class SeriesService {
             }
           : {},
         query.genre ? { genres: { some: { slug: query.genre } } } : {},
-        query.status ? { status: query.status as SeriesStatus } : {},
         query.year ? { year: query.year } : {},
       ],
-    };
+    });
 
     return this.prisma.series.findMany({
       where,
-      include: { genres: true, episodes: { orderBy: { publishedAt: 'desc' }, take: 1 } },
+      include: {
+        genres: true,
+        episodes: {
+          where: publishedEpisodeWhere(),
+          include: { season: true, subtitles: { where: { isActive: true } } },
+          orderBy: { publishedAt: 'desc' },
+          take: 1,
+        },
+      },
       orderBy: [{ featured: 'desc' }, { createdAt: 'desc' }],
+    }).then(toCatalogResponse);
+  }
+
+  listAdmin() {
+    return this.prisma.series.findMany({
+      where: { deletedAt: null },
+      include: { genres: true },
+      orderBy: [{ featured: 'desc' }, { updatedAt: 'desc' }],
     });
   }
 
   featured() {
     return this.prisma.series.findMany({
-      where: { featured: true, deletedAt: null },
+      where: publishedSeriesWhere({ featured: true }),
       include: { genres: true },
       take: 8,
       orderBy: { updatedAt: 'desc' },
-    });
+    }).then(toCatalogResponse);
   }
 
   async bySlug(slug: string, ip?: string) {
-    const series = await this.prisma.series.findUnique({
-      where: { slug, deletedAt: null },
-      include: { genres: true, episodes: { orderBy: { number: 'asc' } } },
+    const series = await this.prisma.series.findFirst({
+      where: publishedSeriesWhere({ slug }),
+      include: {
+        genres: true,
+        episodes: {
+          where: publishedEpisodeWhere(),
+          include: { season: true, subtitles: { where: { isActive: true }, orderBy: [{ isDefault: 'desc' }, { language: 'asc' }] } },
+          orderBy: [{ season: { number: 'asc' } }, { position: 'asc' }, { number: 'asc' }],
+        },
+      },
     });
     if (!series) throw new NotFoundException('Serie no encontrada');
     await this.prisma.$transaction([
       this.prisma.series.update({ where: { id: series.id }, data: { views: { increment: 1 } } }),
       this.prisma.viewLog.create({ data: { seriesId: series.id, ip } }),
     ]);
-    return series;
+    return toCatalogResponse(series);
   }
 
   create(dto: CreateSeriesDto) {

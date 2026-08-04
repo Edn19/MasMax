@@ -9,6 +9,7 @@ import { HistoryModule } from './history/history.module';
 import { ProfilesModule } from './profiles/profiles.module';
 import { ListsModule } from './lists/lists.module';
 import { SearchModule } from './search/search.module';
+import { SeasonsModule } from './seasons/seasons.module';
 import { AdminModule } from './admin/admin.module';
 import { AuthModule } from './auth/auth.module';
 import { CommentsModule } from './comments/comments.module';
@@ -22,6 +23,9 @@ import { SeriesModule } from './series/series.module';
 import { SettingsModule } from './settings/settings.module';
 import { UsersModule } from './users/users.module';
 import { UploadsModule } from './uploads/uploads.module';
+import { SubtitlesModule } from './subtitles/subtitles.module';
+import { StorageModule } from './storage/storage.module';
+import { VideoProcessingModule } from './video-processing/video-processing.module';
 
 @Module({
   imports: [
@@ -31,9 +35,12 @@ import { UploadsModule } from './uploads/uploads.module';
       useFactory: (config: ConfigService) => [{ ttl: Number(config.get<string>('RATE_LIMIT_TTL_SECONDS') ?? 60) * 1000, limit: Number(config.get<string>('RATE_LIMIT_MAX') ?? 100) }],
     }),
     AuditModule,
+    StorageModule,
+    VideoProcessingModule,
     PrismaModule,
     AuthModule,
     SeriesModule,
+    SeasonsModule,
     EpisodesModule,
     MoviesModule,
     FavoritesModule,
@@ -41,6 +48,7 @@ import { UploadsModule } from './uploads/uploads.module';
     CommentsModule,
     UsersModule,
     UploadsModule,
+    SubtitlesModule,
     SettingsModule,
     AdminModule,
     MediaModule,

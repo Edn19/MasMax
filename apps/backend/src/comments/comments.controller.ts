@@ -11,6 +11,7 @@ export class CommentsController {
   constructor(private readonly comments: CommentsService) {}
 
   @Get('comments/:episodeId')
+  @UseGuards(JwtAuthGuard)
   list(@Param('episodeId') episodeId: string) {
     return this.comments.list(episodeId);
   }

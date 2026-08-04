@@ -9,6 +9,7 @@ export class MoviesController {
   constructor(private readonly movies: MoviesService) {}
 
   @Get('movies')
+  @UseGuards(JwtAuthGuard)
   list() {
     return this.movies.listPublished();
   }
@@ -20,11 +21,13 @@ export class MoviesController {
   }
 
   @Get('movies/:slug')
+  @UseGuards(JwtAuthGuard)
   bySlug(@Param('slug') slug: string) {
     return this.movies.bySlug(slug);
   }
 
   @Get('movies/:id/recommendations')
+  @UseGuards(JwtAuthGuard)
   recommendations(@Param('id') id: string) {
     return this.movies.recommendations(id);
   }

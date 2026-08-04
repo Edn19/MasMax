@@ -24,15 +24,15 @@ export function normalizeVideo(input: VideoInput): NormalizedVideo {
   if (!submittedUrl) throw new BadRequestException('La URL del video es obligatoria');
 
   if (source === VideoSource.LOCAL) {
-    if (type !== VideoType.MP4 || !/^\/uploads\/videos\/[^/]+\.mp4$/i.test(input.videoUrl)) {
-      throw new BadRequestException('El video local debe ser un archivo MP4 valido');
-    }
+    const isMp4 = type === VideoType.MP4 && /^\/(?:uploads|api\/storage\/objects)\/videos\/[^/]+\.mp4$/i.test(input.videoUrl);
+    const isHls = type === VideoType.HLS && /^\/(?:uploads|api\/storage\/objects)\/hls\/[a-z0-9]+\/master\.m3u8$/i.test(input.videoUrl);
+    if (!isMp4 && !isHls) throw new BadRequestException('El video local debe ser un MP4 o manifiesto HLS procesado valido');
     return {
       videoUrl: input.videoUrl.trim(),
-      originalVideoUrl: input.videoUrl.trim(),
+      originalVideoUrl: submittedUrl,
       processedVideoUrl: input.videoUrl.trim(),
       videoSource: VideoSource.LOCAL,
-      videoType: VideoType.MP4,
+      videoType: type,
     };
   }
 

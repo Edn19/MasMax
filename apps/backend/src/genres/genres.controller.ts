@@ -9,6 +9,7 @@ export class GenresController {
   constructor(private readonly genres: GenresService) {}
 
   @Get('genres')
+  @UseGuards(JwtAuthGuard)
   list() {
     return this.genres.list();
   }

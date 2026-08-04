@@ -3,6 +3,23 @@ export type SeriesStatus = 'AIRING' | 'FINISHED' | 'PAUSED';
 export type VideoType = 'MP4' | 'HLS' | 'DRIVE' | 'EMBED';
 export type VideoSource = 'LOCAL' | 'URL' | 'DRIVE' | 'HLS' | 'EMBED';
 export type MovieStatus = 'DRAFT' | 'PUBLISHED' | 'HIDDEN';
+export type SubtitleFormat = 'VTT' | 'SRT';
+
+export type SubtitleTrack = {
+  id: string;
+  episodeId?: string;
+  movieId?: string;
+  language: string;
+  label: string;
+  url: string;
+  originalName: string;
+  sourceFormat: SubtitleFormat;
+  isDefault: boolean;
+  isForced: boolean;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
 
 export type Genre = {
   id: string;
@@ -23,23 +40,47 @@ export type Series = {
   views: number;
   genres: Genre[];
   episodes?: Episode[];
+  seasons?: Season[];
 };
 
-export type Episode = {
+export type Season = {
   id: string;
   seriesId: string;
   number: number;
   title: string;
   description: string;
-  videoUrl: string;
+  posterUrl?: string;
+  published: boolean;
+  createdAt: string;
+  updatedAt: string;
+  _count?: { episodes: number };
+};
+
+export type Episode = {
+  id: string;
+  seriesId: string;
+  seasonId: string;
+  number: number;
+  position: number;
+  title: string;
+  description: string;
+  videoUrl?: string;
   videoType: VideoType;
   videoSource: VideoSource;
   originalVideoUrl?: string;
   processedVideoUrl?: string;
   thumbnailUrl?: string;
+  durationSec?: number;
+  introStartSec?: number;
+  introEndSec?: number;
+  recapStartSec?: number;
+  recapEndSec?: number;
+  published: boolean;
   publishedAt: string;
   views: number;
   series?: Series;
+  season?: Season;
+  subtitles?: SubtitleTrack[];
 };
 
 export type Movie = {
@@ -51,16 +92,21 @@ export type Movie = {
   bannerUrl: string;
   videoSource: VideoSource;
   videoType: VideoType;
-  videoUrl: string;
+  videoUrl?: string;
   originalVideoUrl?: string;
   processedVideoUrl?: string;
   duration: number;
+  introStartSec?: number;
+  introEndSec?: number;
+  recapStartSec?: number;
+  recapEndSec?: number;
   releaseYear: number;
   genres: Genre[];
   status: MovieStatus;
   views: number;
   createdAt: string;
   updatedAt: string;
+  subtitles?: SubtitleTrack[];
 };
 
 export type Favorite = {
@@ -86,6 +132,7 @@ export type Comment = {
   id: string;
   body: string;
   approved: boolean;
+  status?: 'PENDING' | 'APPROVED' | 'REJECTED' | 'HIDDEN';
   createdAt: string;
   user: { name: string; email?: string };
   episode?: Episode;
@@ -101,6 +148,41 @@ export type Stats = {
   activeSessions?: number;
   pendingComments?: number;
   processingFiles?: number;
+  totals: { series: number; seasons: number | null; episodes: number; movies: number; users: number };
+  usersSummary: { total: number; active: number; activeRecently: number; activeSessions: number };
+  views: { total: number; daily: Array<{ date: string; views: number }> };
+  content: {
+    mostViewed: Array<{ id: string; type: 'series' | 'episode' | 'movie'; title: string; subtitle?: string; views: number }>;
+    recentlyAdded: Array<{ id: string; type: 'series' | 'episode' | 'movie'; title: string; createdAt: string }>;
+    withoutPoster: number;
+    seriesWithoutCover: number;
+    moviesWithoutPoster: number;
+    episodesWithoutVideo: number;
+  };
+  comments: { pending: number };
+  files: {
+    processing: number;
+    failed: number;
+    orphaned: number;
+    recentErrors: Array<{ id: string; originalName: string; errorMessage?: string; updatedAt: string }>;
+  };
+  storage: {
+    totalBytes: string;
+    totalFiles: number;
+    videos: number;
+    videoBytes: string;
+    images: number;
+    imageBytes: string;
+    processing: number;
+    failed: number;
+    orphaned: number;
+    orphanedBytes: string;
+    freeBytes: string | null;
+    driver?: 'local' | 's3';
+  };
+  health: { backend: 'ok' | 'error'; database: 'ok' | 'error'; storage: 'ok' | 'error' };
+  recentActivity: Array<{ id: string; action: string; entity: string; entityId?: string; createdAt: string; actor?: { name: string; email: string } }>;
+  generatedAt: string;
 };
 
 export type WatchHistory = { id:string;episodeId?:string;movieId?:string;positionSec:number;durationSec:number;percentage:number;completedAt?:string;lastPlayedAt:string;episode?:Episode;movie?:Movie };

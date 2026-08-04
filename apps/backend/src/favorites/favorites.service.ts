@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CheckFavoriteDto, CreateFavoriteDto } from './dto';
+import { toCatalogResponse } from '../common/catalog-response';
 
 @Injectable()
 export class FavoritesService {
@@ -15,19 +16,19 @@ export class FavoritesService {
         movie: { include: { genres: true } },
       },
       orderBy: { createdAt: 'desc' },
-    });
+    }).then(toCatalogResponse);
   }
 
   async create(userId: string, dto: CreateFavoriteDto) {
     this.validateTarget(dto);
     try {
-      return await this.prisma.favorite.create({
+      return toCatalogResponse(await this.prisma.favorite.create({
         data: { userId, episodeId: dto.episodeId, movieId: dto.movieId },
         include: {
           episode: { include: { series: true } },
           movie: { include: { genres: true } },
         },
-      });
+      }));
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         if (error.code === 'P2002') throw new ConflictException('Este contenido ya esta en favoritos');

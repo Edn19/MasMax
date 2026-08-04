@@ -1,0 +1,55 @@
+import { Activity, RefreshCw, Upload } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { toast } from 'sonner';
+import { EmptyState } from '../../components/Layout';
+import { api, deleteJson, postJson } from '../../lib/api';
+import { VideoProcessingJob } from '../../lib/resumable-upload';
+import { boundedPercent } from '../../lib/ui';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { Panel, ResourceError } from '../components/AdminUi';
+
+type ProcessingRow = VideoProcessingJob & { input: { originalName: string }; createdAt: string; retainOriginal: boolean };
+type WorkerHealth = { queue: string; worker: string; heartbeat?: string | null };
+
+export function VideoProcessingAdminPage() {
+  const [jobs, setJobs] = useState<ProcessingRow[]>([]);
+  const [health, setHealth] = useState<WorkerHealth | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pendingCancel, setPendingCancel] = useState<ProcessingRow | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      try {
+        const [nextJobs, nextHealth] = await Promise.all([api<ProcessingRow[]>('/admin/video-processing'), api<WorkerHealth>('/admin/video-processing/worker-health')]);
+        if (mounted) { setJobs(nextJobs); setHealth(nextHealth); setError(null); }
+      } catch (reason) { if (mounted) setError((reason as Error).message); }
+    };
+    void load(); const interval = window.setInterval(() => void load(), 3000);
+    return () => { mounted = false; window.clearInterval(interval); };
+  }, []);
+
+  async function retry(id: string) { try { await postJson(`/admin/video-processing/${id}/retry`, {}); toast.success('Trabajo reenviado'); } catch (reason) { toast.error((reason as Error).message); } }
+  async function cancel() { if (!pendingCancel) return; try { await deleteJson(`/admin/video-processing/${pendingCancel.id}`); toast.success('Cancelacion solicitada'); setPendingCancel(null); } catch (reason) { toast.error((reason as Error).message); } }
+
+  return <Panel title="Procesamiento de video" description="Supervisa la conversion a HLS, la cola Redis y la disponibilidad del worker." action={<Link to="/admin/episodes" className="button-primary"><Upload size={17} /> Subir video</Link>}>
+    <ResourceError message={error} />
+    <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:max-w-xl"><HealthCard label="Redis" value={health?.queue} /><HealthCard label="Worker" value={health?.worker} detail={health?.heartbeat ? `Ultimo latido: ${new Date(health.heartbeat).toLocaleTimeString()}` : undefined} /></div>
+    {jobs.length === 0 ? <EmptyState icon={<Activity size={30} />} title="No hay videos en procesamiento" description="Los videos enviados para convertir a HLS apareceran aqui." action={<Link to="/admin/episodes" className="button-primary"><Upload size={17} /> Subir video</Link>} /> : <div className="admin-table-shell" role="region" aria-label="Trabajos de procesamiento" tabIndex={0}>
+      <table className="min-w-[980px]"><thead><tr><th>Archivo</th><th>Estado</th><th>Progreso</th><th>Calidades</th><th>Intentos</th><th>Original</th><th>Fecha</th><th>Acciones</th></tr></thead><tbody>{jobs.map((job) => { const progress = boundedPercent(job.progress); return <tr key={job.id}><td className="max-w-xs"><p className="truncate font-medium text-white" title={job.input.originalName}>{job.input.originalName}</p>{job.errorMessage && <details className="mt-1 text-xs text-coral"><summary className="cursor-pointer">Ver error</summary><p className="mt-1 max-w-sm whitespace-normal">{job.errorMessage}</p></details>}</td><td><JobBadge status={job.status} /></td><td><div className="w-36"><div className="mb-1 flex justify-between text-xs text-slate-400"><span>{job.status === 'PROCESSING' ? 'Procesando' : 'Avance'}</span><span>{Math.round(progress)}%</span></div><div role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100} className="h-2 overflow-hidden rounded-full bg-ink"><div className="h-full rounded-full bg-brand transition-[width]" style={{ width: `${progress}%` }} /></div></div></td><td>{job.profiles.map((profile) => `${profile}p`).join(', ') || '-'}</td><td>{job.attempts}</td><td>{job.retainOriginal ? 'Conservar' : 'Eliminar'}</td><td className="whitespace-nowrap text-slate-400">{new Date(job.createdAt).toLocaleDateString()}</td><td><div className="flex gap-2">{['FAILED', 'CANCELLED'].includes(job.status) && <button type="button" onClick={() => void retry(job.id)} className="button-secondary min-h-9 px-3 py-1"><RefreshCw size={15} /> Reintentar</button>}{['QUEUED', 'PROCESSING'].includes(job.status) && <button type="button" onClick={() => setPendingCancel(job)} className="button-secondary min-h-9 border-coral/40 px-3 py-1 text-coral">Cancelar</button>}</div></td></tr>; })}</tbody></table>
+    </div>}
+    <ConfirmDialog open={Boolean(pendingCancel)} title="Cancelar procesamiento" itemName={pendingCancel?.input.originalName} description="La conversion FFmpeg se detendra. Podras reintentar el trabajo posteriormente." confirmLabel="Cancelar procesamiento" onCancel={() => setPendingCancel(null)} onConfirm={() => void cancel()} />
+  </Panel>;
+}
+
+function HealthCard({ label, value, detail }: { label: string; value?: string; detail?: string }) {
+  const healthy = value === 'ok'; const waiting = !value;
+  return <div className="rounded-xl border border-line bg-ink/55 p-4"><div className="flex items-center justify-between gap-3"><span className="text-sm font-medium text-white">{label}</span><span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${waiting ? 'border-line text-slate-400' : healthy ? 'border-mint/35 bg-mint/10 text-mint' : 'border-coral/35 bg-coral/10 text-coral'}`}>{waiting ? 'Consultando' : healthy ? 'Disponible' : 'No disponible'}</span></div>{detail && <p className="mt-2 text-xs text-slate-500">{detail}</p>}</div>;
+}
+
+function JobBadge({ status }: { status: VideoProcessingJob['status'] }) {
+  const style = status === 'COMPLETED' ? 'border-mint/35 bg-mint/10 text-mint' : status === 'FAILED' || status === 'CANCELLED' ? 'border-coral/35 bg-coral/10 text-coral' : 'border-warning/35 bg-warning/10 text-warning';
+  const label = { QUEUED: 'Pendiente', PROCESSING: 'Procesando', COMPLETED: 'Completado', FAILED: 'Error', CANCELLED: 'Cancelado' }[status];
+  return <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${style}`}>{label}</span>;
+}

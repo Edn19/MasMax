@@ -8,17 +8,22 @@
     "build": "npm run build --workspace apps/backend && npm run build --workspace apps/frontend",
     "lint": "npm run lint --workspace apps/backend && npm run lint --workspace apps/frontend",
     "typecheck": "npm run typecheck --workspace apps/backend && npm run lint --workspace apps/frontend",
-    "test": "npm run test --workspace apps/backend",
+    "test": "npm run test --workspace apps/backend && npm run test --workspace apps/frontend",
     "prisma:generate": "npm run prisma:generate --workspace apps/backend",
     "prisma:migrate": "npm run prisma:migrate --workspace apps/backend",
     "seed": "npm run prisma:seed --workspace apps/backend",
     "seed:admin": "npm run prisma:seed:admin --workspace apps/backend",
-    "seed:demo": "npm run prisma:seed:demo --workspace apps/backend"
+    "seed:demo": "npm run prisma:seed:demo --workspace apps/backend",
+    "env:validate": "node scripts/validate-env.mjs",
+    "audit:production": "node scripts/audit-production.mjs"
   },
   "workspaces": [
     "apps/backend",
     "apps/frontend"
   ],
+  "overrides": {
+    "multer": "2.2.0"
+  },
   "devDependencies": {
     "concurrently": "^8.2.2"
   }

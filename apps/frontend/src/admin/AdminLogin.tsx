@@ -8,8 +8,8 @@ export function AdminLogin() {
   const { login, user, loading: sessionLoading } = useAuth();
   const settings = useSiteSettings();
   const navigate = useNavigate();
-  const [email, setEmail] = useState('admin@site.local');
-  const [password, setPassword] = useState('Admin123456');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -31,7 +31,7 @@ export function AdminLogin() {
   }
 
   return (
-    <main className="relative isolate min-h-screen overflow-hidden bg-[#05070d] px-4 py-8 text-slate-100 sm:px-6">
+    <main id="main-content" tabIndex={-1} className="relative isolate min-h-screen overflow-hidden bg-[#05070d] px-4 py-5 text-slate-100 sm:px-6 sm:py-8">
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute -left-28 top-[-8rem] h-[28rem] w-[28rem] rounded-full bg-brand/20 blur-[120px]" />
         <div className="absolute -right-24 bottom-[-8rem] h-[30rem] w-[30rem] rounded-full bg-coral/20 blur-[130px]" />
@@ -39,7 +39,7 @@ export function AdminLogin() {
         <div className="absolute inset-x-0 top-0 h-52 bg-gradient-to-b from-black/70 to-transparent" />
       </div>
 
-      <div className="relative mx-auto flex min-h-[calc(100vh-4rem)] max-w-6xl items-center">
+      <div className="relative mx-auto flex min-h-[calc(100vh-2.5rem)] max-w-6xl items-center sm:min-h-[calc(100vh-4rem)]">
         <div className="grid w-full items-center gap-12 lg:grid-cols-[1.05fr_0.95fr]">
           <section className="hidden lg:block">
             <Link to="/" className="inline-flex items-center gap-3 text-xl font-black tracking-wide text-white">
@@ -57,7 +57,7 @@ export function AdminLogin() {
               <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-bold uppercase tracking-[0.22em] text-brand backdrop-blur">
                 <Sparkles size={15} /> Tu universo de historias
               </span>
-              <h2 className="mt-7 text-5xl font-black leading-[1.05] text-white xl:text-6xl">
+              <h2 className="mt-7 text-5xl font-extrabold leading-[1.05] tracking-tight text-white xl:text-6xl">
                 Series animadas y peliculas, en un solo lugar.
               </h2>
               <p className="mt-6 max-w-lg text-lg leading-8 text-slate-400">
@@ -78,7 +78,7 @@ export function AdminLogin() {
           </section>
 
           <section className="mx-auto w-full max-w-md">
-            <div className="mb-8 flex justify-center lg:hidden">
+            <div className="mb-5 flex justify-center sm:mb-8 lg:hidden">
               <Link to="/" className="flex items-center gap-3 text-xl font-black text-white">
                 {settings.logo ? (
                   <img src={settings.logo} alt={settings.siteName} className="h-11 w-11 rounded-xl object-contain" />
@@ -91,28 +91,32 @@ export function AdminLogin() {
 
             <form
               onSubmit={submit}
-              className="rounded-[2rem] border border-white/10 bg-slate-950/65 p-6 shadow-[0_30px_100px_rgba(0,0,0,.55)] backdrop-blur-2xl sm:p-9"
+              className="rounded-3xl border border-white/10 bg-slate-950/70 p-5 shadow-[0_30px_100px_rgba(0,0,0,.55)] backdrop-blur-2xl sm:p-9"
             >
               <div className="grid h-12 w-12 place-items-center rounded-2xl border border-brand/30 bg-brand/10 text-brand">
                 <LockKeyhole size={23} />
               </div>
-              <h1 className="mt-6 text-3xl font-black text-white">Bienvenido de nuevo</h1>
+              <h1 className="mt-5 text-3xl font-bold tracking-tight text-white sm:mt-6">Bienvenido de nuevo</h1>
               <p className="mt-2 leading-6 text-slate-400">Continua viendo tus series y peliculas favoritas</p>
 
               {error && (
-                <div role="alert" className="mt-6 rounded-xl border border-red-400/25 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                <div id="login-error" role="alert" className="mt-6 rounded-xl border border-red-400/25 bg-red-500/10 px-4 py-3 text-sm text-red-200">
                   {error}
                 </div>
               )}
 
-              <label className="mt-7 block text-sm font-bold text-slate-200">
-                Email o usuario
+              <label className="mt-6 block text-sm font-medium text-slate-200 sm:mt-7">
+                Email
                 <span className="relative mt-2 block">
                   <Mail className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
                   <input
+                    id="login-email"
                     type="email"
                     autoComplete="username"
+                    autoFocus
                     required
+                    aria-invalid={Boolean(error)}
+                    aria-describedby={error ? 'login-error' : undefined}
                     className="w-full rounded-xl border border-white/10 bg-white/[0.055] py-3.5 pl-11 pr-4 text-white outline-none transition placeholder:text-slate-600 focus:border-brand/70 focus:bg-white/[0.08] focus:ring-4 focus:ring-brand/10"
                     placeholder="admin@site.local"
                     value={email}
@@ -121,14 +125,18 @@ export function AdminLogin() {
                 </span>
               </label>
 
-              <label className="mt-5 block text-sm font-bold text-slate-200">
+              <label className="mt-5 block text-sm font-medium text-slate-200">
                 Contrasena
                 <span className="relative mt-2 block">
                   <LockKeyhole className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
                   <input
+                    id="login-password"
                     type={showPassword ? 'text' : 'password'}
                     autoComplete="current-password"
                     required
+                    minLength={8}
+                    aria-invalid={Boolean(error)}
+                    aria-describedby={error ? 'login-error' : undefined}
                     className="w-full rounded-xl border border-white/10 bg-white/[0.055] py-3.5 pl-11 pr-12 text-white outline-none transition placeholder:text-slate-600 focus:border-brand/70 focus:bg-white/[0.08] focus:ring-4 focus:ring-brand/10"
                     placeholder="Minimo 8 caracteres"
                     value={password}
@@ -147,7 +155,7 @@ export function AdminLogin() {
 
               <button
                 disabled={submitting || sessionLoading}
-                className="mt-7 flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-5 py-3.5 font-black text-ink shadow-[0_16px_40px_rgba(34,211,238,.18)] transition hover:-translate-y-0.5 hover:bg-white disabled:cursor-wait disabled:translate-y-0 disabled:opacity-60"
+                className="button-primary mt-7 w-full py-3.5 shadow-[0_16px_40px_rgba(34,211,238,.18)]"
               >
                 {submitting || sessionLoading ? (
                   <>

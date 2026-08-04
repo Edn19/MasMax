@@ -1,0 +1,10 @@
+{
+  "exceptions": [
+    {
+      "package": "picomatch",
+      "maximumSeverity": "high",
+      "expires": "2026-10-31",
+      "reason": "Dependencia transitiva de tooling de build; no se ejecuta en el contenedor Nginx de runtime. Actualizar al publicarse una version compatible corregida."
+    }
+  ]
+}

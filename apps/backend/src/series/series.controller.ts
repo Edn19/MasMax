@@ -9,18 +9,27 @@ export class SeriesController {
   constructor(private readonly series: SeriesService) {}
 
   @Get('series')
+  @UseGuards(JwtAuthGuard)
   list(@Query() query: QuerySeriesDto) {
     return this.series.list(query);
   }
 
   @Get('series/featured')
+  @UseGuards(JwtAuthGuard)
   featured() {
     return this.series.featured();
   }
 
   @Get('series/:slug')
+  @UseGuards(JwtAuthGuard)
   bySlug(@Param('slug') slug: string, @Ip() ip: string) {
     return this.series.bySlug(slug, ip);
+  }
+
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Get('admin/series')
+  adminList() {
+    return this.series.listAdmin();
   }
 
   @UseGuards(JwtAuthGuard, AdminGuard)

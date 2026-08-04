@@ -4,6 +4,7 @@ export function useAsync<T>(loader: () => Promise<T>, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
 
   useEffect(() => {
     let mounted = true;
@@ -20,7 +21,7 @@ export function useAsync<T>(loader: () => Promise<T>, deps: unknown[] = []) {
     return () => {
       mounted = false;
     };
-  }, deps);
+  }, [...deps, revision]);
 
-  return { data, loading, error, setData };
+  return { data, loading, error, setData, reload: () => setRevision((current) => current + 1) };
 }

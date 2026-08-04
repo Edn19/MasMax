@@ -1,7 +1,7 @@
 import { LockKeyhole, LogOut } from 'lucide-react';
 import { Navigate, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
-import { isAuthenticated } from '../lib/auth-storage';
+import { hasAdminRole, isAuthenticated } from '../lib/auth-storage';
 import { LoadingBlock } from './Layout';
 
 function SessionLoading() {
@@ -29,7 +29,7 @@ export function AdminRoute() {
   if (!isAuthenticated()) return <Navigate to="/login" replace />;
   if (!user) return <Navigate to="/login" replace />;
 
-  if (user.role !== 'ADMIN') {
+  if (!hasAdminRole(user)) {
     return (
       <main className="grid min-h-screen place-items-center bg-ink px-4 text-slate-100">
         <section className="w-full max-w-md rounded-3xl border border-line bg-panel/90 p-8 text-center shadow-glow">

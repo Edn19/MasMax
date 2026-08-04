@@ -102,13 +102,21 @@ async function main() {
       },
     });
 
+    const season = await prisma.season.upsert({
+      where: { seriesId_number: { seriesId: series.id, number: 1 } },
+      update: { title: 'Temporada 1', published: true, deletedAt: null },
+      create: { seriesId: series.id, number: 1, title: 'Temporada 1', published: true },
+    });
+
     for (let episodeNumber = 1; episodeNumber <= 4; episodeNumber += 1) {
       await prisma.episode.upsert({
-        where: { seriesId_number: { seriesId: series.id, number: episodeNumber } },
+        where: { seasonId_number: { seasonId: season.id, number: episodeNumber } },
         update: {},
         create: {
           seriesId: series.id,
+          seasonId: season.id,
           number: episodeNumber,
+          position: episodeNumber,
           title: `Episodio ${episodeNumber}: Senal ${episodeNumber}`,
           description: `Una entrega demo original de ${item.title}, creada para probar catalogo, reproductor y comentarios.`,
           videoType: episodeNumber % 2 === 0 ? VideoType.HLS : VideoType.MP4,
@@ -126,6 +134,7 @@ async function main() {
               : 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
           videoSource: episodeNumber % 2 === 0 ? VideoSource.HLS : VideoSource.URL,
           thumbnailUrl: image(`${item.slug}-episode-${episodeNumber}`, 800, 450),
+          published: true,
           publishedAt: new Date(Date.now() - episodeNumber * 86400000),
         },
       });

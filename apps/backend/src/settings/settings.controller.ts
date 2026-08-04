@@ -9,6 +9,7 @@ export class SettingsController {
   constructor(private readonly settings: SettingsService) {}
 
   @Get('settings')
+  @UseGuards(JwtAuthGuard, AdminGuard)
   get() {
     return this.settings.get();
   }

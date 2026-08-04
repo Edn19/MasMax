@@ -3,13 +3,12 @@ import { Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto, UpdatePasswordDto, UpdateUserDto } from './dto';
-import { AuditService } from '../audit/audit.service';
 import { createHash, randomBytes } from 'crypto';
 import { CreateInvitationDto } from './dto';
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   list() {
     return this.prisma.user.findMany({
@@ -78,13 +77,12 @@ export class UsersService {
       this.prisma.user.update({ where: { id }, data: { deletedAt: new Date(), active: false, email: `deleted-${id}@invalid.local`, name: 'Usuario eliminado' } }),
       this.prisma.session.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date(), revocationReason: 'USER_DELETED' } }),
     ]);
-    await this.audit.record({ actorId: currentUserId, action: 'USER_DELETED', entity: 'User', entityId: id });
     return { id };
   }
 
-  async revokeSessions(id: string, actorId: string) { const result = await this.prisma.session.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date(), revocationReason: 'ADMIN_REVOKED' } }); await this.audit.record({ actorId, action: 'USER_SESSIONS_REVOKED', entity: 'User', entityId: id, changes: { count: result.count } }); return { revoked: result.count }; }
+  async revokeSessions(id: string, _actorId: string) { const result = await this.prisma.session.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date(), revocationReason: 'ADMIN_REVOKED' } }); return { revoked: result.count }; }
   listInvitations() { return this.prisma.invitation.findMany({ select: { id: true, email: true, role: true, expiresAt: true, maxUses: true, usedCount: true, revokedAt: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 100 }); }
-  async createInvitation(dto: CreateInvitationDto, creatorId: string) { const token = randomBytes(32).toString('base64url'); const invitation = await this.prisma.invitation.create({ data: { creatorId, email: dto.email?.trim().toLowerCase(), role: dto.role, expiresAt: new Date(Date.now() + dto.expiresHours * 3_600_000), maxUses: dto.maxUses, tokenHash: createHash('sha256').update(token).digest('hex') }, select: { id: true, email: true, role: true, expiresAt: true, maxUses: true } }); await this.audit.record({ actorId: creatorId, action: 'INVITATION_CREATED', entity: 'Invitation', entityId: invitation.id }); return { ...invitation, token }; }
+  async createInvitation(dto: CreateInvitationDto, creatorId: string) { const token = randomBytes(32).toString('base64url'); const invitation = await this.prisma.invitation.create({ data: { creatorId, email: dto.email?.trim().toLowerCase(), role: dto.role, expiresAt: new Date(Date.now() + dto.expiresHours * 3_600_000), maxUses: dto.maxUses, tokenHash: createHash('sha256').update(token).digest('hex') }, select: { id: true, email: true, role: true, expiresAt: true, maxUses: true } }); return { ...invitation, token }; }
 
   private async ensureAnotherAdmin(excludedId: string) { const count = await this.prisma.user.count({ where: { id: { not: excludedId }, role: Role.ADMIN, active: true, deletedAt: null } }); if (!count) throw new BadRequestException('No se puede eliminar, desactivar ni degradar al ultimo administrador activo'); }
 }

@@ -8,16 +8,20 @@ export class SettingsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async get() {
-    const current = await this.prisma.siteSetting.findFirst();
-    return current ?? this.prisma.siteSetting.create({ data: {} });
+    return this.prisma.siteSetting.upsert({ where: { key: 'default' }, create: { key: 'default' }, update: {} });
   }
 
   async update(dto: SiteSettingDto) {
-    const current = await this.get();
     const { featuredSeriesIds, sectionOrder, ...data } = dto;
-    return this.prisma.siteSetting.update({
-      where: { id: current.id },
-      data: {
+    return this.prisma.siteSetting.upsert({
+      where: { key: 'default' },
+      create: {
+        key: 'default',
+        ...data,
+        featuredSeriesIds: featuredSeriesIds as Prisma.InputJsonValue | undefined,
+        sectionOrder: sectionOrder as Prisma.InputJsonValue | undefined,
+      },
+      update: {
         ...data,
         featuredSeriesIds: featuredSeriesIds as Prisma.InputJsonValue | undefined,
         sectionOrder: sectionOrder as Prisma.InputJsonValue | undefined,

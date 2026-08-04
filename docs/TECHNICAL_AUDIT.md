@@ -22,7 +22,7 @@ Se añadió validación estricta de entorno, seed idempotente separado, sesiones
 
 ## Riesgos y limitaciones restantes
 
-- No existe todavía worker independiente de transcodificación HLS ni generación automática de perfiles/miniaturas.
+- El worker independiente FFmpeg genera HLS adaptativo y miniaturas; la concurrencia debe dimensionarse y vigilarse segun `docs/VIDEO_PROCESSING.md`.
 - No hay subida por partes/resumible; sí hay progreso, streaming a disco, límites y limpieza por fallo.
 - SMTP, invitaciones administrativas UI, verificación de correo, subtítulos completos, selector de audio, modo infantil integral y marcado masivo de temporadas siguen pendientes.
 - La búsqueda usa `contains` de PostgreSQL; para catálogos grandes conviene `pg_trgm`/full text.

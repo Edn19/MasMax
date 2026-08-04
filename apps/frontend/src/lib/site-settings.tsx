@@ -1,10 +1,11 @@
 import { createContext, ReactNode, useContext, useEffect, useState } from 'react';
 import { SiteSetting } from '../types/models';
 import { api } from './api';
+import { siteDisplayName } from './ui';
 
 const defaults: SiteSetting = {
   id: 'default',
-  siteName: 'NovaStream',
+  siteName: 'MasMax',
   primaryColor: '#22d3ee',
   secondaryColor: '#fb7185',
   colorMode: 'dark',
@@ -33,7 +34,7 @@ export function SiteSettingsProvider({ children }: { children: ReactNode }) {
     document.documentElement.style.setProperty('--site-primary', settings.primaryColor);
     document.documentElement.style.setProperty('--site-secondary', settings.secondaryColor);
     document.documentElement.dataset.theme = settings.colorMode;
-    document.title = settings.siteName;
+    document.title = siteDisplayName(settings.siteName);
     if (settings.favicon) {
       let favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
       if (!favicon) {
@@ -45,7 +46,7 @@ export function SiteSettingsProvider({ children }: { children: ReactNode }) {
     }
   }, [settings]);
 
-  return <SiteSettingsContext.Provider value={settings}>{children}</SiteSettingsContext.Provider>;
+  return <SiteSettingsContext.Provider value={{ ...settings, siteName: siteDisplayName(settings.siteName) }}>{children}</SiteSettingsContext.Provider>;
 }
 
 export function useSiteSettings() {

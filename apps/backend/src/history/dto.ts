@@ -14,3 +14,9 @@ export class HistoryQueryDto {
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) @Max(100) limit = 30;
   @IsOptional() @IsString() profileId?: string;
 }
+
+export class ProgressQueryDto {
+  @IsOptional() @IsString() episodeId?: string;
+  @IsOptional() @IsString() movieId?: string;
+  @IsOptional() @IsString() profileId?: string;
+}

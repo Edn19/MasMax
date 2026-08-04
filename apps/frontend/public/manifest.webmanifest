@@ -1,0 +1,21 @@
+{
+  "id": "/",
+  "name": "MasMax",
+  "short_name": "MasMax",
+  "description": "Plataforma privada de series y peliculas",
+  "lang": "es",
+  "start_url": "/login",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#050810",
+  "theme_color": "#050810",
+  "icons": [
+    { "src": "/pwa-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Inicio", "url": "/home" },
+    { "name": "Series", "url": "/series" },
+    { "name": "Peliculas", "url": "/movies" }
+  ]
+}
