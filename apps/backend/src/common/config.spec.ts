@@ -20,6 +20,17 @@ describe('configuracion segura', () => {
   });
   it('limita la concurrencia FFmpeg', () => {
     const secret = 'x'.repeat(32);
-    expect(() => validateEnvironment({ DATABASE_URL: secret, JWT_SECRET: secret, JWT_REFRESH_SECRET: secret, MEDIA_SIGNING_SECRET: secret, FFMPEG_CONCURRENCY: '8' })).toThrow('FFMPEG_CONCURRENCY');
+    expect(() => validateEnvironment({ DATABASE_URL: secret, JWT_SECRET: secret, JWT_REFRESH_SECRET: secret, MEDIA_SIGNING_SECRET: secret, VIDEO_WORKER_CONCURRENCY: '8' })).toThrow('VIDEO_WORKER_CONCURRENCY');
+  });
+  it('valida los limites conservadores de transcodificacion', () => {
+    const secret = 'x'.repeat(32);
+    expect(() => validateEnvironment({ DATABASE_URL: secret, JWT_SECRET: secret, JWT_REFRESH_SECRET: secret, MEDIA_SIGNING_SECRET: secret, FFMPEG_THREADS: '32' })).toThrow('FFMPEG_THREADS');
+    expect(() => validateEnvironment({ DATABASE_URL: secret, JWT_SECRET: secret, JWT_REFRESH_SECRET: secret, MEDIA_SIGNING_SECRET: secret, HLS_SEGMENT_DURATION: '1' })).toThrow('HLS_SEGMENT_DURATION');
+  });
+  it('rechaza configuracion inconsistente de subidas reanudables', () => {
+    const secret = 'x'.repeat(32);
+    const base = { DATABASE_URL: secret, JWT_SECRET: secret, JWT_REFRESH_SECRET: secret, MEDIA_SIGNING_SECRET: secret };
+    expect(() => validateEnvironment({ ...base, RESUMABLE_CHUNK_SIZE_MB: '0' })).toThrow('RESUMABLE_CHUNK_SIZE_MB');
+    expect(() => validateEnvironment({ ...base, MAX_VIDEO_UPLOAD_MB: '16', RESUMABLE_CHUNK_SIZE_MB: '16' })).toThrow('MAX_VIDEO_UPLOAD_MB');
   });
 });

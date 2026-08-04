@@ -86,6 +86,11 @@ enum VideoProcessingStatus {
   CANCELLED
 }
 
+enum VideoProcessingTargetType {
+  MOVIE
+  EPISODE
+}
+
 model User {
   id                  String               @id @default(cuid())
   email               String               @unique
@@ -276,7 +281,7 @@ model Comment {
 
 model SiteSetting {
   id                 String   @id @default(cuid())
-  key                String   @default("default") @unique
+  key                String   @unique @default("default")
   siteName           String   @default("NovaStream")
   logo               String?
   favicon            String?
@@ -422,27 +427,28 @@ model ContentListItem {
 }
 
 model MediaFile {
-  id           String               @id @default(cuid())
-  originalName String
-  storageName  String               @unique
-  relativePath String               @unique
-  mimeType     String
-  extension    String
-  sizeBytes    BigInt
-  checksum     String?
-  mediaType    MediaType
-  status       MediaStatus          @default(UPLOADED)
-  width        Int?
-  height       Int?
-  durationSec  Float?
-  bitrate      Int?
-  videoCodec   String?
-  audioCodec   String?
-  errorMessage String?
-  createdAt    DateTime             @default(now())
-  updatedAt    DateTime             @updatedAt
-  inputJobs    VideoProcessingJob[] @relation("ProcessingInput")
-  outputJob    VideoProcessingJob?  @relation("ProcessingOutput")
+  id            String               @id @default(cuid())
+  originalName  String
+  storageName   String               @unique
+  relativePath  String               @unique
+  mimeType      String
+  extension     String
+  sizeBytes     BigInt
+  checksum      String?
+  mediaType     MediaType
+  status        MediaStatus          @default(UPLOADED)
+  width         Int?
+  height        Int?
+  durationSec   Float?
+  bitrate       Int?
+  videoCodec    String?
+  audioCodec    String?
+  probeMetadata Json?
+  errorMessage  String?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  inputJobs     VideoProcessingJob[] @relation("ProcessingInput")
+  outputJob     VideoProcessingJob?  @relation("ProcessingOutput")
 
   @@index([mediaType, status])
   @@index([checksum])
@@ -450,34 +456,46 @@ model MediaFile {
 }
 
 model VideoProcessingJob {
-  id                String                @id @default(cuid())
-  requestedById     String
-  requestedBy       User                  @relation(fields: [requestedById], references: [id], onDelete: Cascade)
-  inputMediaFileId  String
-  inputMediaFile    MediaFile             @relation("ProcessingInput", fields: [inputMediaFileId], references: [id], onDelete: Restrict)
-  outputMediaFileId String?               @unique
-  outputMediaFile   MediaFile?            @relation("ProcessingOutput", fields: [outputMediaFileId], references: [id], onDelete: SetNull)
-  queueJobId        String?               @unique
-  status            VideoProcessingStatus @default(QUEUED)
-  progress          Int                   @default(0)
-  sourceWidth       Int?
-  sourceHeight      Int?
-  durationSec       Float?
-  profiles          Int[]                 @default([])
-  masterPath        String?
-  thumbnailPath     String?
-  retainOriginal    Boolean               @default(true)
-  cancelRequested   Boolean               @default(false)
-  attempts          Int                   @default(0)
-  errorMessage      String?
-  startedAt         DateTime?
-  completedAt       DateTime?
-  createdAt         DateTime              @default(now())
-  updatedAt         DateTime              @updatedAt
+  id                 String                     @id @default(cuid())
+  requestedById      String
+  requestedBy        User                       @relation(fields: [requestedById], references: [id], onDelete: Cascade)
+  inputMediaFileId   String
+  inputMediaFile     MediaFile                  @relation("ProcessingInput", fields: [inputMediaFileId], references: [id], onDelete: Restrict)
+  outputMediaFileId  String?                    @unique
+  outputMediaFile    MediaFile?                 @relation("ProcessingOutput", fields: [outputMediaFileId], references: [id], onDelete: SetNull)
+  queueJobId         String?                    @unique
+  status             VideoProcessingStatus      @default(QUEUED)
+  progress           Int                        @default(0)
+  processingStage    String                     @default("QUEUED")
+  sourceWidth        Int?
+  sourceHeight       Int?
+  durationSec        Float?
+  sourceFormat       String?
+  sourceVideoCodec   String?
+  sourceAudioCodecs  Json                       @default("[]")
+  sourceMetadata     Json?
+  profiles           Int[]                      @default([])
+  generatedQualities Int[]                      @default([])
+  audioTracks        Json                       @default("[]")
+  subtitleTracks     Json                       @default("[]")
+  masterPath         String?
+  thumbnailPath      String?
+  targetType         VideoProcessingTargetType?
+  targetId           String?
+  associatedAt       DateTime?
+  retainOriginal     Boolean                    @default(true)
+  cancelRequested    Boolean                    @default(false)
+  attempts           Int                        @default(0)
+  errorMessage       String?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
 
   @@index([status, createdAt])
   @@index([requestedById, createdAt])
   @@index([inputMediaFileId, createdAt])
+  @@index([targetType, targetId])
 }
 
 model ResumableUpload {
@@ -487,6 +505,7 @@ model ResumableUpload {
   originalName  String
   mimeType      String
   sizeBytes     BigInt
+  lastModified  BigInt?
   chunkSize     Int
   totalChunks   Int
   uploadedParts Int[]                 @default([])

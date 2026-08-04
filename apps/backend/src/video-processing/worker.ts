@@ -13,7 +13,7 @@ async function bootstrap() {
   const app = await NestFactory.createApplicationContext(WorkerAppModule, { logger: ['log', 'error', 'warn'] });
   const config = app.get(ConfigService);
   const processor = app.get(VideoProcessingProcessor);
-  const concurrency = Math.max(1, Math.min(4, Number(config.get<string>('FFMPEG_CONCURRENCY') ?? 1)));
+  const concurrency = Math.max(1, Math.min(4, Number(config.get<string>('VIDEO_WORKER_CONCURRENCY') ?? config.get<string>('FFMPEG_CONCURRENCY') ?? 1)));
   const worker = new Worker<VideoProcessingPayload>(VIDEO_PROCESSING_QUEUE, (job) => processor.process(job.data.processingJobId), { connection: redisConnection(config), concurrency });
   const heartbeatClient = new IORedis(config.get<string>('REDIS_URL') ?? 'redis://redis:6379', { maxRetriesPerRequest: 1 });
   const heartbeat = async () => { await heartbeatClient.set(VIDEO_PROCESSING_HEARTBEAT, String(Date.now()), 'PX', 45_000); };

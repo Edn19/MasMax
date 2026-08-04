@@ -4,6 +4,12 @@ import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { MulterError } from 'multer';
 
+export function uploadLimitMessage(requestUrl: string) {
+  return requestUrl.includes('/uploads/resumable/')
+    ? 'El fragmento supera el limite permitido. Revisa RESUMABLE_CHUNK_SIZE_MB y el limite de la peticion.'
+    : 'El archivo supera el limite de subida configurado.';
+}
+
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(GlobalExceptionFilter.name);
@@ -18,9 +24,9 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     let message: string | string[] = 'Ocurrio un error inesperado';
 
     if (exception instanceof MulterError) {
-      status = HttpStatus.BAD_REQUEST;
+      status = exception.code === 'LIMIT_FILE_SIZE' ? HttpStatus.PAYLOAD_TOO_LARGE : HttpStatus.BAD_REQUEST;
       code = exception.code;
-      message = exception.code === 'LIMIT_FILE_SIZE' ? 'El archivo supera el limite configurado' : exception.message;
+      message = exception.code === 'LIMIT_FILE_SIZE' ? uploadLimitMessage(request.originalUrl) : 'La solicitud multipart no cumple los limites permitidos.';
     } else if (exception instanceof HttpException) {
       status = exception.getStatus();
       const body = exception.getResponse();
@@ -29,6 +35,10 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         message = (body as { message: string | string[] }).message;
       }
       code = status === 400 ? 'VALIDATION_ERROR' : `HTTP_${status}`;
+      if (status === HttpStatus.PAYLOAD_TOO_LARGE) {
+        code = 'LIMIT_FILE_SIZE';
+        message = uploadLimitMessage(request.originalUrl);
+      }
     } else if (exception instanceof Prisma.PrismaClientKnownRequestError) {
       status = exception.code === 'P2002' ? HttpStatus.CONFLICT : HttpStatus.BAD_REQUEST;
       code = exception.code;

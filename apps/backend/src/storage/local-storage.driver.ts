@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { access, copyFile, mkdir, readFile, rename, rm, stat, statfs, writeFile } from 'fs/promises';
+import { access, copyFile, mkdir, readFile, rm, stat, statfs, writeFile } from 'fs/promises';
 import { dirname, join, relative, resolve } from 'path';
 import { normalizeStorageKey, StorageDriver, StorageObjectMetadata, StorageWriteOptions } from './storage.types';
 
@@ -12,12 +12,8 @@ export class LocalStorageDriver implements StorageDriver {
   async putFile(key: string, sourcePath: string) {
     const target = this.localPath(key);
     await mkdir(dirname(target), { recursive: true });
-    try { await rename(sourcePath, target); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error;
-      await copyFile(sourcePath, target);
-      await rm(sourcePath, { force: true });
-    }
+    await copyFile(sourcePath, target);
+    await rm(sourcePath, { force: true });
   }
   async putBuffer(key: string, content: Buffer) { const target = this.localPath(key); await mkdir(dirname(target), { recursive: true }); await writeFile(target, content, { flag: 'wx' }); }
   async downloadToFile(key: string, destinationPath: string) { await mkdir(dirname(destinationPath), { recursive: true }); await copyFile(this.localPath(key), destinationPath); }

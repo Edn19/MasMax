@@ -43,14 +43,14 @@ docker compose exec backend npm run prisma:seed:demo
 - Refresh token rotativo en cookie `HttpOnly`, almacenado solo como hash en PostgreSQL.
 - Cierre de sesión real y revocación por dispositivo desde `/profile/security`.
 - Bloqueo temporal tras intentos fallidos, rate limiting global, Helmet, CSP y CORS con lista permitida.
-- Videos MP4 locales bloqueados en `/uploads/videos/*`; el reproductor solicita una URL HMAC temporal y Nginx sirve el archivo mediante `X-Accel-Redirect` y una ubicación `internal`.
+- Originales MP4 y MKV bloqueados en `/uploads/videos/*`; el reproductor solo recibe MP4 autorizado o HLS validado mediante rutas protegidas.
 - Las imágenes continúan públicas en `/uploads/images/*`.
 
 Para producción usa HTTPS mediante un proxy externo y configura `FRONTEND_URL`, `APP_PUBLIC_URL` y secretos diferentes por instalación.
 
 ## Contenido y video
 
-En administración se aceptan MP4 locales de hasta 1080p y el límite `MAX_VIDEO_UPLOAD_MB`. La subida usa `multipart/form-data` con campo `file`, almacenamiento temporal, firma MP4 real, `ffprobe`, SHA-256 y registro `MediaFile`. Archivos inválidos se eliminan.
+En administracion se aceptan MP4 y MKV locales de hasta 1080p y el limite `MAX_VIDEO_UPLOAD_MB`. Para Matroska se reconocen `video/matroska`, `video/x-matroska`, `application/x-matroska` y el fallback `application/octet-stream`. La subida reanudable usa almacenamiento temporal en disco, firma MP4/EBML, `ffprobe`, SHA-256 y registro `MediaFile`. Archivos falsos, corruptos, sin video o con duracion invalida se eliminan. MKV nunca se reproduce directamente: el worker lo convierte a HLS.
 
 También se admiten URL HTTPS MP4, HLS `.m3u8`, Google Drive público y embeds de dominios incluidos en `ALLOWED_EMBED_DOMAINS`. Drive puede bloquear reproducción por permisos o cuota; comparte el archivo como “cualquier persona con el enlace”.
 
@@ -90,13 +90,13 @@ Atajos del reproductor: `Espacio` o `K` reproduce/pausa, flechas izquierda/derec
 
 Los videos locales se envian por partes. El panel permite pausar, continuar y cancelar, muestra velocidad y tiempo restante y reintenta fallos transitorios. Tras recargar el navegador, selecciona nuevamente el mismo archivo para continuar solo con las partes faltantes.
 
-Configura `RESUMABLE_CHUNK_SIZE_MB` y `RESUMABLE_UPLOAD_EXPIRES_HOURS`. El protocolo, los checksums, la limpieza y la decision frente a TUS se detallan en `docs/UPLOAD_ARCHITECTURE.md`.
+Configura `MAX_VIDEO_UPLOAD_MB`, `RESUMABLE_CHUNK_SIZE_MB`, `RESUMABLE_CHUNK_REQUEST_OVERHEAD_MB`, `RESUMABLE_UPLOAD_MAX_RETRIES` y `RESUMABLE_UPLOAD_EXPIRATION_HOURS`. La configuracion inicial usa partes de 16 MiB, margen Multer de 2 MiB y cinco intentos recuperables. El protocolo, checksums, reanudacion y limites Nginx se detallan en `docs/RESUMABLE_UPLOADS.md` y `docs/UPLOAD_ARCHITECTURE.md`.
 
 ## Procesamiento HLS
 
-Con `ENABLE_HLS=true`, cada MP4 local validado pasa a Redis/BullMQ y un worker FFmpeg independiente genera calidades adaptativas, `master.m3u8`, segmentos y miniatura. El panel `/admin/processing` muestra progreso y permite cancelar o reintentar. El contenido solo puede guardarse con la URL HLS cuando el job termina.
+Con `ENABLE_HLS=true`, cada MP4 o MKV local validado pasa a Redis/BullMQ y un worker FFmpeg independiente genera calidades adaptativas, `master.m3u8`, segmentos, subtitulos de texto y miniatura. El panel `/admin/processing` muestra etapa, progreso, codecs y calidades; permite cancelar, reintentar y asociar un resultado recuperado a pelicula o episodio. Los borradores no se publican automaticamente.
 
-El valor recomendado inicial es `FFMPEG_CONCURRENCY=1`. Configuracion, recursos, retencion del original, S3 y diagnostico: `docs/VIDEO_PROCESSING.md`.
+El valor recomendado inicial es `VIDEO_WORKER_CONCURRENCY=1`. El original solo se elimina despues de validar y asociar la salida. Configuracion, recursos, retencion, codecs y diagnostico: `docs/VIDEO_PROCESSING.md` y `docs/MKV_HLS.md`.
 
 ## Auditoria
 

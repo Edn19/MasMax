@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeStorageKey } from './storage.types';
 import { LocalStorageDriver } from './local-storage.driver';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -22,6 +22,18 @@ describe('LocalStorageDriver', () => {
       expect(await driver.temporaryUrl('images/test.png', 60)).toBe('/uploads/images/test.png');
       await driver.delete('images/test.png');
       expect(await driver.exists('images/test.png')).toBe(false);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('copia archivos al destino final y elimina el temporal', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'masmax-storage-'));
+    const source = join(root, 'source.upload');
+    const driver = new LocalStorageDriver({ get: (key: string) => key === 'LOCAL_STORAGE_PATH' ? root : undefined } as never);
+    try {
+      await writeFile(source, 'video-demo');
+      await driver.putFile('videos/demo.mkv', source);
+      expect((await driver.read('videos/demo.mkv')).toString()).toBe('video-demo');
+      await expect(driver.metadata('source.upload')).resolves.toBeNull();
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 });

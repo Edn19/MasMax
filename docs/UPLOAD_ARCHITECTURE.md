@@ -21,9 +21,9 @@ Todas las rutas requieren JWT y rol `ADMIN`.
 
 ## Cliente
 
-El navegador corta el `File` con `Blob.slice`, calcula SHA-256 de una sola parte y la envia. Nunca mantiene el video entero en memoria. Muestra porcentaje, velocidad y tiempo restante; permite pausar, continuar, cancelar y reintenta cada parte hasta tres veces con espera exponencial.
+El navegador corta el `File` con `Blob.slice`, calcula SHA-256 de una sola parte y la envia. Nunca mantiene el video entero en memoria. Muestra porcentaje, velocidad y tiempo restante; permite pausar, continuar y cancelar. Reintenta solo errores recuperables hasta el limite configurado, con espera exponencial y jitter.
 
-Tras recargar la pagina, el navegador no permite recuperar automaticamente un archivo local por seguridad. El panel muestra la sesion pendiente; el administrador vuelve a seleccionar el mismo archivo (nombre y tamano) y solo se envian las partes faltantes.
+Tras recargar la pagina, el navegador no permite recuperar automaticamente un archivo local por seguridad. El panel muestra la sesion pendiente; el administrador vuelve a seleccionar el mismo archivo (nombre, tamano, MIME y ultima modificacion) y solo se envian las partes faltantes.
 
 ## Persistencia y almacenamiento
 
@@ -34,11 +34,13 @@ Las sesiones inactivas vencen y se limpian al iniciar el backend o al operar sob
 ## Configuracion
 
 - `MAX_VIDEO_UPLOAD_MB=2048`: limite total del MP4.
-- `RESUMABLE_CHUNK_SIZE_MB=8`: parte entre 1 y 64 MB.
-- `RESUMABLE_UPLOAD_EXPIRES_HOURS=24`: vida de una sesion inacabada.
+- `RESUMABLE_CHUNK_SIZE_MB=16`: parte para sesiones nuevas, entre 1 y 64 MiB.
+- `RESUMABLE_CHUNK_REQUEST_OVERHEAD_MB=2`: margen de Multer sobre el chunk.
+- `RESUMABLE_UPLOAD_MAX_RETRIES=5`: intentos maximos por parte recuperable.
+- `RESUMABLE_UPLOAD_EXPIRATION_HOURS=24`: vida de una sesion inacabada.
 - `UPLOAD_DIR=/app/uploads`: raiz local y temporal.
 
-Dimensiona el disco temporal para alojar al menos el archivo incompleto y una segunda copia durante el ensamblado. Nginx conserva `client_max_body_size 2048M`, aunque las solicitudes reanudables individuales solo transportan una parte.
+Dimensiona el disco temporal para alojar al menos el archivo incompleto y una segunda copia durante el ensamblado. Nginx permite 64 MiB en la ruta reanudable y reserva 2048M exclusivamente para la ruta de video directo.
 
 ## Seguridad e integridad
 

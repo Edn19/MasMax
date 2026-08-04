@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ResumableUpload, ResumableUploadStatus } from '@prisma/client';
 import { createHash } from 'crypto';
@@ -9,13 +9,17 @@ import { pipeline } from 'stream/promises';
 import { PrismaService } from '../prisma/prisma.service';
 import { MediaValidationService } from './media-validation.service';
 import { CompleteResumableUploadDto, InitiateResumableUploadDto, UploadPartDto } from './resumable-upload.dto';
-import { expectedPartSize, mergeUploadedPart } from './resumable-upload.utils';
+import { expectedPartSize, mergeUploadedPart, totalPartsFor } from './resumable-upload.utils';
 import { VideoProcessingService } from '../video-processing/video-processing.service';
+import { validateUploadIdentity } from '../video-processing/media-probe';
+import { uploadsConfig } from './uploads.config';
 
 const activeStatuses: ResumableUploadStatus[] = ['INITIATED', 'UPLOADING', 'ASSEMBLING'];
 
 @Injectable()
 export class ResumableUploadService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(ResumableUploadService.name);
+  private readonly cancelledUploads = new Set<string>();
   private cleanupTimer?: NodeJS.Timeout;
 
   constructor(private readonly prisma: PrismaService, private readonly config: ConfigService, private readonly validation: MediaValidationService, private readonly processing: VideoProcessingService) {}
@@ -30,12 +34,12 @@ export class ResumableUploadService implements OnModuleInit, OnModuleDestroy {
     await this.cleanupExpired();
     if (/[\\/]/.test(dto.originalName)) throw new BadRequestException('El nombre del archivo no puede contener rutas');
     const originalName = basename(dto.originalName.trim());
-    if (originalName !== dto.originalName.trim() || !originalName.toLowerCase().endsWith('.mp4')) throw new BadRequestException('Solo se permiten nombres de archivo MP4 validos');
-    const maxBytes = Number(this.config.get<string>('MAX_VIDEO_UPLOAD_MB') ?? 2048) * 1024 * 1024;
-    if (dto.size > maxBytes) throw new BadRequestException(`El archivo supera el limite de ${Math.floor(maxBytes / 1024 / 1024)} MB`);
-    const chunkSize = Number(this.config.get<string>('RESUMABLE_CHUNK_SIZE_MB') ?? 8) * 1024 * 1024;
-    if (!Number.isSafeInteger(chunkSize) || chunkSize < 1024 * 1024 || chunkSize > 64 * 1024 * 1024) throw new BadRequestException('RESUMABLE_CHUNK_SIZE_MB debe estar entre 1 y 64');
-    const upload = await this.prisma.resumableUpload.create({ data: { userId, originalName, mimeType: dto.mimeType || 'video/mp4', sizeBytes: BigInt(dto.size), chunkSize, totalChunks: Math.ceil(dto.size / chunkSize), checksum: dto.checksum?.toLowerCase(), expiresAt: this.expiration() } });
+    if (originalName !== dto.originalName.trim()) throw new BadRequestException('El nombre del archivo no es valido');
+    validateUploadIdentity(originalName, dto.mimeType);
+    const maxBytes = uploadsConfig.maxVideoUploadBytes;
+    if (dto.size > maxBytes) throw new BadRequestException(`El archivo supera el limite permitido de ${Math.floor(maxBytes / 1024 / 1024)} MB.`);
+    const chunkSize = uploadsConfig.resumableChunkSizeBytes;
+    const upload = await this.prisma.resumableUpload.create({ data: { userId, originalName, mimeType: dto.mimeType || (originalName.toLowerCase().endsWith('.mkv') ? 'video/x-matroska' : 'video/mp4'), sizeBytes: BigInt(dto.size), lastModified: dto.lastModified === undefined ? null : BigInt(dto.lastModified), chunkSize, totalChunks: totalPartsFor(dto.size, chunkSize), checksum: dto.checksum?.toLowerCase(), expiresAt: this.expiration() } });
     await mkdir(this.sessionDir(upload.id), { recursive: true });
     return this.present(upload);
   }
@@ -44,22 +48,39 @@ export class ResumableUploadService implements OnModuleInit, OnModuleDestroy {
   async status(userId: string, id: string) { return this.present(await this.owned(userId, id)); }
 
   async uploadPart(userId: string, id: string, file: Express.Multer.File, dto: UploadPartDto) {
+    const startedAt = Date.now();
+    let expectedSize: number | undefined;
     try {
       const upload = await this.owned(userId, id);
       this.assertWritable(upload);
       if (dto.index >= upload.totalChunks) throw new BadRequestException('El indice de la parte esta fuera de rango');
-      const expectedSize = expectedPartSize(Number(upload.sizeBytes), upload.chunkSize, upload.totalChunks, dto.index);
+      expectedSize = expectedPartSize(Number(upload.sizeBytes), upload.chunkSize, upload.totalChunks, dto.index);
       if (file.size !== expectedSize) throw new BadRequestException(`La parte debe tener exactamente ${expectedSize} bytes`);
       const checksum = await this.checksum(file.path);
       if (checksum !== dto.checksum.toLowerCase()) throw new BadRequestException('El checksum de la parte no coincide');
       await mkdir(this.sessionDir(id), { recursive: true });
       const destination = this.partPath(id, dto.index);
+      if (upload.uploadedParts.includes(dto.index)) {
+        const existing = await stat(destination).catch(() => null);
+        const existingChecksum = existing?.size === expectedSize ? await this.checksum(destination) : null;
+        await rm(file.path, { force: true });
+        if (existingChecksum === checksum) {
+          this.logPart('idempotent', id, userId, dto, expectedSize, file.size, upload.totalChunks, startedAt);
+          return this.present(upload);
+        }
+        throw new ConflictException('La parte ya existe pero su tamano o checksum no coincide');
+      }
       await rm(destination, { force: true });
       await rename(file.path, destination);
       const uploadedParts = mergeUploadedPart(upload.uploadedParts, dto.index);
       const updated = await this.prisma.resumableUpload.update({ where: { id }, data: { uploadedParts, status: 'UPLOADING', expiresAt: this.expiration(), errorMessage: null } });
+      this.logPart('stored', id, userId, dto, expectedSize, file.size, upload.totalChunks, startedAt);
       return this.present(updated);
-    } catch (error) { await rm(file.path, { force: true }).catch(() => undefined); throw error; }
+    } catch (error) {
+      await rm(file.path, { force: true }).catch(() => undefined);
+      this.logger.warn(JSON.stringify({ event: 'resumable_part_failed', uploadId: id, userId, partIndex: dto.index, expectedSize, receivedSize: file.size, attempt: dto.attempt ?? 1, durationMs: Date.now() - startedAt, error: error instanceof Error ? error.message : 'Error desconocido' }));
+      throw error;
+    }
   }
 
   async complete(userId: string, id: string, dto: CompleteResumableUploadDto) {
@@ -71,12 +92,16 @@ export class ResumableUploadService implements OnModuleInit, OnModuleDestroy {
     const assembledPath = this.assembledPath(id);
     try {
       await rm(assembledPath, { force: true });
-      for (let index = 0; index < upload.totalChunks; index += 1) await pipeline(createReadStream(this.partPath(id, index)), createWriteStream(assembledPath, { flags: 'a' }));
+      for (let index = 0; index < upload.totalChunks; index += 1) {
+        if (this.cancelledUploads.has(id)) throw new ConflictException('La carga fue cancelada durante el ensamblado');
+        await pipeline(createReadStream(this.partPath(id, index)), createWriteStream(assembledPath, { flags: 'a' }));
+      }
       const assembledStat = await stat(assembledPath);
       if (assembledStat.size !== Number(upload.sizeBytes)) throw new BadRequestException('El tamano ensamblado no coincide con la carga iniciada');
       const checksum = await this.checksum(assembledPath);
       const expectedChecksum = dto.checksum?.toLowerCase() ?? upload.checksum;
       if (expectedChecksum && checksum !== expectedChecksum) throw new BadRequestException('El checksum final del archivo no coincide');
+      if (this.cancelledUploads.has(id)) throw new ConflictException('La carga fue cancelada durante el ensamblado');
       const file = { fieldname: 'file', originalname: upload.originalName, encoding: '7bit', mimetype: upload.mimeType, size: assembledStat.size, destination: this.tempRoot(), filename: `${id}.upload`, path: assembledPath, buffer: Buffer.alloc(0), stream: createReadStream(assembledPath) } as Express.Multer.File;
       const result = await this.validation.validateVideo(file);
       const response = { ...result, processingJob: await this.processing.enqueue(userId, result.mediaId) };
@@ -85,7 +110,8 @@ export class ResumableUploadService implements OnModuleInit, OnModuleDestroy {
       return response;
     } catch (error) {
       await rm(assembledPath, { force: true }).catch(() => undefined);
-      await this.prisma.resumableUpload.update({ where: { id }, data: { status: 'UPLOADING', expiresAt: this.expiration(), errorMessage: error instanceof Error ? error.message.slice(0, 500) : 'Error al completar la carga' } }).catch(() => undefined);
+      const cancelled = this.cancelledUploads.delete(id);
+      if (!cancelled) await this.prisma.resumableUpload.update({ where: { id }, data: { status: 'UPLOADING', expiresAt: this.expiration(), errorMessage: error instanceof Error ? error.message.slice(0, 500) : 'Error al completar la carga' } }).catch(() => undefined);
       throw error;
     }
   }
@@ -93,7 +119,7 @@ export class ResumableUploadService implements OnModuleInit, OnModuleDestroy {
   async cancel(userId: string, id: string) {
     const upload = await this.owned(userId, id);
     if (upload.status === 'COMPLETED') throw new ConflictException('Una carga completada no se puede cancelar');
-    if (upload.status === 'ASSEMBLING') throw new ConflictException('Espera a que termine el ensamblado antes de cancelar');
+    if (upload.status === 'ASSEMBLING') this.cancelledUploads.add(id);
     await Promise.all([rm(this.sessionDir(id), { recursive: true, force: true }), rm(this.assembledPath(id), { force: true })]);
     await this.prisma.resumableUpload.update({ where: { id }, data: { status: 'CANCELLED', expiresAt: new Date() } });
     return { cancelled: true };
@@ -110,11 +136,12 @@ export class ResumableUploadService implements OnModuleInit, OnModuleDestroy {
 
   private async owned(userId: string, id: string) { const upload = await this.prisma.resumableUpload.findFirst({ where: { id, userId } }); if (!upload) throw new NotFoundException('Carga reanudable no encontrada'); return upload; }
   private assertWritable(upload: ResumableUpload) { if (!['INITIATED', 'UPLOADING'].includes(upload.status)) throw new ConflictException(`La carga esta en estado ${upload.status}`); if (upload.expiresAt < new Date()) throw new ConflictException('La carga ha expirado'); }
-  private expiration() { return new Date(Date.now() + Number(this.config.get<string>('RESUMABLE_UPLOAD_EXPIRES_HOURS') ?? 24) * 3_600_000); }
+  private expiration() { return new Date(Date.now() + uploadsConfig.uploadExpirationHours * 3_600_000); }
   private tempRoot() { return join(this.config.get<string>('UPLOAD_DIR') ?? join(process.cwd(), 'uploads'), 'tmp', 'resumable'); }
   private sessionDir(id: string) { if (!/^[a-z0-9]+$/i.test(id)) throw new BadRequestException('Identificador de carga no valido'); return join(this.tempRoot(), id); }
   private partPath(id: string, index: number) { return join(this.sessionDir(id), `${index}.part`); }
   private assembledPath(id: string) { return join(this.tempRoot(), `${id}.assembled.upload`); }
   private checksum(path: string) { return new Promise<string>((resolve, reject) => { const hash = createHash('sha256'); createReadStream(path).on('error', reject).on('data', (chunk) => hash.update(chunk)).on('end', () => resolve(hash.digest('hex'))); }); }
-  private present(upload: ResumableUpload) { const uploadedBytes = upload.uploadedParts.reduce((sum, index) => sum + expectedPartSize(Number(upload.sizeBytes), upload.chunkSize, upload.totalChunks, index), 0); return { id: upload.id, originalName: upload.originalName, mimeType: upload.mimeType, size: Number(upload.sizeBytes), chunkSize: upload.chunkSize, totalChunks: upload.totalChunks, uploadedParts: upload.uploadedParts, uploadedBytes, status: upload.status, expiresAt: upload.expiresAt.toISOString(), errorMessage: upload.errorMessage, result: upload.result }; }
+  private logPart(event: 'stored' | 'idempotent', uploadId: string, userId: string, dto: UploadPartDto, expectedSize: number, receivedSize: number, totalChunks: number, startedAt: number) { this.logger.log(JSON.stringify({ event: `resumable_part_${event}`, uploadId, userId, partIndex: dto.index, expectedSize, receivedSize, totalChunks, attempt: dto.attempt ?? 1, durationMs: Date.now() - startedAt })); }
+  private present(upload: ResumableUpload) { const uploadedBytes = upload.uploadedParts.reduce((sum, index) => sum + expectedPartSize(Number(upload.sizeBytes), upload.chunkSize, upload.totalChunks, index), 0); return { id: upload.id, originalName: upload.originalName, mimeType: upload.mimeType, size: Number(upload.sizeBytes), lastModified: upload.lastModified === null ? null : Number(upload.lastModified), chunkSize: upload.chunkSize, totalChunks: upload.totalChunks, uploadedParts: upload.uploadedParts, uploadedBytes, maxRetryAttempts: uploadsConfig.maxRetryAttempts, status: upload.status, expiresAt: upload.expiresAt.toISOString(), errorMessage: upload.errorMessage, result: upload.result }; }
 }
