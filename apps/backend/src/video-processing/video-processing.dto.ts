@@ -13,5 +13,10 @@ export class AssociateVideoProcessingDto {
 }
 
 export class ConfigureVideoProcessingDto {
-  @IsBoolean() retainOriginal!: boolean;
+  @IsOptional() @IsBoolean() retainOriginal?: boolean;
+  @IsOptional() @IsEnum(VideoProcessingTargetType) targetType?: VideoProcessingTargetType;
+  @ValidateIf((value: ConfigureVideoProcessingDto) => value.targetType !== undefined || value.targetId !== undefined)
+  @IsString()
+  @Matches(/^[a-zA-Z0-9_-]+$/)
+  targetId?: string;
 }

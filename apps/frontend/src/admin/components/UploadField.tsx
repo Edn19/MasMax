@@ -1,14 +1,16 @@
 import { CheckCircle2, FileUp, Image as ImageIcon, RotateCcw, Trash2, UploadCloud } from 'lucide-react';
 import { DragEvent, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { api, deleteJson, patchJson, postJson, uploadFile } from '../../lib/api';
+import { patchJson, uploadFile } from '../../lib/api';
 import { cancelResumableUpload, getResumableUpload, initiateResumableUpload, listResumableUploads, matchesResumableFile, ResumableUploadResult, ResumableUploadSession, UploadControl, uploadResumableVideo, VideoProcessingJob } from '../../lib/resumable-upload';
 import { acceptedVideoInput, validateVideoSelection } from '../../lib/video-upload-policy';
+import { useVideoProcessingJobs } from '../../lib/video-processing-jobs';
+import { processingStageLabel, shouldPromptForResumableFile } from '../../lib/video-processing-state';
 import { formatBytes } from './admin-utils';
 
 type UploadedDetails = { originalUrl?: string; thumbnailUrl?: string };
 
-export function UploadField({ type, label, onUploaded }: { type: 'video' | 'image'; label: string; onUploaded: (url: string, mimeType: string, details?: UploadedDetails) => void }) {
+export function UploadField({ type, label, onUploaded, target }: { type: 'video' | 'image'; label: string; onUploaded: (url: string, mimeType: string, details?: UploadedDetails) => void; target?: { type: 'EPISODE' | 'MOVIE'; id: string } }) {
   const maxVideoUploadMb = Number(import.meta.env.VITE_MAX_VIDEO_UPLOAD_MB ?? 2048);
   const [progress, setProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
@@ -19,7 +21,7 @@ export function UploadField({ type, label, onUploaded }: { type: 'video' | 'imag
   const [file, setFile] = useState<File | null>(null);
   const [session, setSession] = useState<ResumableUploadSession | null>(null);
   const [pending, setPending] = useState<ResumableUploadSession[]>([]);
-  const [processingJob, setProcessingJob] = useState<VideoProcessingJob | null>(null);
+  const [processingJobId, setProcessingJobId] = useState<string | null>(null);
   const [uploadedResult, setUploadedResult] = useState<ResumableUploadResult | null>(null);
   const [error, setError] = useState('');
   const [dragging, setDragging] = useState(false);
@@ -27,21 +29,22 @@ export function UploadField({ type, label, onUploaded }: { type: 'video' | 'imag
   const [keepOriginal, setKeepOriginal] = useState(String(import.meta.env.VITE_VIDEO_KEEP_ORIGINAL_DEFAULT ?? 'true').toLowerCase() === 'true');
   const controlRef = useRef<UploadControl>({ paused: false, cancelled: false });
   const inputRef = useRef<HTMLInputElement>(null);
+  const completedJobsRef = useRef(new Set<string>());
   const onUploadedRef = useRef(onUploaded);
+  const processing = useVideoProcessingJobs();
+  const processingJob = type === 'video' ? (processingJobId ? processing.jobs.find((job) => job.id === processingJobId) : undefined) ?? processing.byTarget(target?.type, target?.id) ?? processing.activeJobs[0] : undefined;
   onUploadedRef.current = onUploaded;
 
   useEffect(() => { if (type === 'video') void listResumableUploads().then(setPending).catch(() => undefined); }, [type]);
   useEffect(() => {
     if (!processingJob) return;
     if (processingJob.status === 'COMPLETED' && processingJob.masterUrl) {
-      setProcessingJob(null);
+      if (completedJobsRef.current.has(processingJob.id)) return;
+      completedJobsRef.current.add(processingJob.id);
+      setProcessingJobId(null);
       onUploadedRef.current(processingJob.masterUrl, 'application/vnd.apple.mpegurl', { originalUrl: uploadedResult?.url, thumbnailUrl: processingJob.thumbnailUrl ?? undefined });
       toast.success('Video HLS procesado y listo');
-      return;
     }
-    if (!['QUEUED', 'PROCESSING'].includes(processingJob.status)) return;
-    const timeout = window.setTimeout(() => void api<VideoProcessingJob>(`/admin/video-processing/${processingJob.id}`).then(setProcessingJob).catch((error: Error) => toast.error(error.message)), 2000);
-    return () => window.clearTimeout(timeout);
   }, [processingJob, uploadedResult]);
 
   async function select(selected?: File) {
@@ -75,7 +78,7 @@ export function UploadField({ type, label, onUploaded }: { type: 'video' | 'imag
       setSession(outcome.session);
       if (outcome.result) {
         setPending((items) => items.filter((item) => item.id !== current.id)); setSession(null); setFile(null);
-        if (outcome.result.processingJob) { const configuredJob = await patchJson<VideoProcessingJob>(`/admin/video-processing/${outcome.result.processingJob.id}/settings`, { retainOriginal: keepOriginal }); setUploadedResult(outcome.result); setProcessingJob(configuredJob); toast.success('Video subido. Procesamiento HLS en cola'); }
+        if (outcome.result.processingJob) { const configuredJob = await patchJson<VideoProcessingJob>(`/admin/video-processing/${outcome.result.processingJob.id}/settings`, { retainOriginal: keepOriginal, targetType: target?.type, targetId: target?.id }); setUploadedResult(outcome.result); setProcessingJobId(configuredJob.id); processing.track(configuredJob); toast.success('Video subido. Procesamiento HLS en cola'); }
         else { onUploaded(outcome.result.url, outcome.result.mimeType); setCompleted(true); toast.success('Video validado y subido'); }
       }
     } catch (error) {
@@ -94,8 +97,8 @@ export function UploadField({ type, label, onUploaded }: { type: 'video' | 'imag
   async function cancel() { controlRef.current.cancelled = true; controlRef.current.abortController?.abort(); controlRef.current.request?.abort(); if (session) await cancelResumableUpload(session.id).catch(() => undefined); setSession(null); setFile(null); setPaused(false); setUploading(false); setProgress(0); setRetryMessage(''); setPending((items) => items.filter((item) => item.id !== session?.id)); }
   function clearSelection() { setFile(null); setError(''); setCompleted(false); setProgress(0); if (inputRef.current) inputRef.current.value = ''; }
   function drop(event: DragEvent<HTMLDivElement>) { event.preventDefault(); setDragging(false); if (!uploading) void select(event.dataTransfer.files?.[0]); }
-  async function cancelProcessing() { if (!processingJob) return; try { setProcessingJob(await deleteJson<VideoProcessingJob>(`/admin/video-processing/${processingJob.id}`)); toast.success('Cancelacion solicitada'); } catch (error) { toast.error((error as Error).message); } }
-  async function retryProcessing() { if (!processingJob) return; try { setProcessingJob(await postJson<VideoProcessingJob>(`/admin/video-processing/${processingJob.id}/retry`, {})); toast.success('Procesamiento reenviado'); } catch (error) { toast.error((error as Error).message); } }
+  async function cancelProcessing() { if (!processingJob || !window.confirm(`Cancelar el procesamiento de ${processingJob.input.originalName}?`)) return; try { await processing.cancel(processingJob.id); toast.success('Cancelacion solicitada'); } catch (error) { toast.error((error as Error).message); } }
+  async function retryProcessing() { if (!processingJob) return; try { await processing.retry(processingJob.id); toast.success('Procesamiento reenviado'); } catch (error) { toast.error((error as Error).message); } }
 
   return (
     <div className="min-w-0 text-sm text-slate-300">
@@ -106,11 +109,11 @@ export function UploadField({ type, label, onUploaded }: { type: 'video' | 'imag
       </div>
       {error && <p role="alert" className="mt-1.5 text-xs font-medium text-coral">{error}</p>}
       {type === 'video' && !session && !processingJob && <label className="mt-3 flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={keepOriginal} onChange={(event) => setKeepOriginal(event.target.checked)} /> Conservar archivo original despues del procesamiento</label>}
-      {type === 'video' && pending.length > 0 && !session && <p className="mt-2 text-xs text-amber-300">Hay una carga pendiente. Selecciona nuevamente el mismo archivo para continuarla.</p>}
+      {type === 'video' && !session && shouldPromptForResumableFile(pending, processingJob) && <p className="mt-2 text-xs text-amber-300">Hay una carga incompleta. Selecciona nuevamente el mismo archivo para continuar enviando sus fragmentos.</p>}
       {(uploading || paused || session) && <><div className="mt-3 h-2 overflow-hidden rounded bg-ink" role="progressbar" aria-valuenow={Math.round(progress)} aria-valuemin={0} aria-valuemax={100}><div className="h-full bg-brand" style={{ width: `${progress}%` }} /></div><div className="mt-1 flex flex-wrap justify-between gap-2 text-xs"><span>{progress.toFixed(1)}%</span>{speed > 0 && <span>{formatBytes(String(speed))}/s | {eta === null ? 'Calculando...' : `${formatDuration(eta)} restantes`}</span>}</div></>}
       {retryMessage && <p role="status" className="mt-2 text-xs font-medium text-amber-300">{retryMessage}</p>}
       {type === 'video' && session && <div className="mt-3 flex gap-2">{uploading ? <button type="button" onClick={pause} className="rounded border border-amber-400 px-3 py-1 text-amber-300">Pausar</button> : paused && file ? <button type="button" onClick={() => void resume()} className="rounded border border-brand px-3 py-1 text-brand">Continuar</button> : null}<button type="button" onClick={() => void cancel()} className="rounded border border-coral px-3 py-1 text-coral">Cancelar</button></div>}
-      {processingJob && <div className="mt-3 rounded-lg border border-line bg-ink/50 p-3"><div className="flex justify-between text-xs"><span>{stageLabel(processingJob.stage, processingJob.status)}</span><span>{processingJob.progress}%</span></div><div className="mt-2 h-2 overflow-hidden rounded bg-panel"><div className="h-full bg-mint" style={{ width: `${processingJob.progress}%` }} /></div>{processingJob.sourceFormat && <p className="mt-2 text-xs text-slate-400">Contenedor: {processingJob.sourceFormat} · Video: {processingJob.sourceVideoCodec ?? 'detectando'} · Audio: {jsonCodecs(processingJob.sourceAudioCodecs)}</p>}{processingJob.profiles.length > 0 && <p className="mt-1 text-xs text-slate-400">Calidades: {(processingJob.generatedQualities.length ? processingJob.generatedQualities : processingJob.profiles).map((profile) => `${profile}p`).join(', ')}</p>}{processingJob.errorMessage && <p className="mt-2 text-xs text-coral">{processingJob.errorMessage}</p>}<div className="mt-2 flex gap-2">{['QUEUED', 'PROCESSING'].includes(processingJob.status) && <button type="button" onClick={() => void cancelProcessing()} className="rounded border border-coral px-3 py-1 text-coral">Cancelar procesamiento</button>}{['FAILED', 'CANCELLED'].includes(processingJob.status) && <button type="button" onClick={() => void retryProcessing()} className="rounded border border-brand px-3 py-1 text-brand">Reintentar</button>}</div></div>}
+      {processingJob && <div className="mt-3 rounded-lg border border-line bg-ink/50 p-3"><div className="flex justify-between text-xs"><span>{processingStageLabel(processingJob.stage, processingJob.status)}</span><span>{processingJob.progress}%</span></div><div className="mt-2 h-2 overflow-hidden rounded bg-panel"><div className="h-full bg-mint" style={{ width: `${processingJob.progress}%` }} /></div>{processingJob.sourceFormat && <p className="mt-2 text-xs text-slate-400">Contenedor: {processingJob.sourceFormat} · Video: {processingJob.sourceVideoCodec ?? 'detectando'} · Audio: {jsonCodecs(processingJob.sourceAudioCodecs)}</p>}{processingJob.profiles.length > 0 && <p className="mt-1 text-xs text-slate-400">Calidades: {(processingJob.generatedQualities.length ? processingJob.generatedQualities : processingJob.profiles).map((profile) => `${profile}p`).join(', ')}</p>}{processingJob.errorMessage && <p className="mt-2 text-xs text-coral">{processingJob.errorMessage}</p>}<div className="mt-2 flex gap-2">{['QUEUED', 'PROCESSING'].includes(processingJob.status) && <button type="button" onClick={() => void cancelProcessing()} className="rounded border border-coral px-3 py-1 text-coral">Cancelar procesamiento</button>}{['FAILED', 'CANCELLED'].includes(processingJob.status) && <button type="button" onClick={() => void retryProcessing()} className="rounded border border-brand px-3 py-1 text-brand">Reintentar</button>}</div></div>}
     </div>
   );
 }
@@ -123,6 +126,4 @@ export function FileSelectionField({ id, label, accept, hint, file, error, disab
 }
 
 function formatDuration(seconds: number) { if (!Number.isFinite(seconds)) return 'Calculando...'; const rounded = Math.max(0, Math.round(seconds)); return rounded >= 3600 ? `${Math.floor(rounded / 3600)}h ${Math.floor(rounded % 3600 / 60)}m` : rounded >= 60 ? `${Math.floor(rounded / 60)}m ${rounded % 60}s` : `${rounded}s`; }
-function processingLabel(status: VideoProcessingJob['status']) { return ({ QUEUED: 'En cola', PROCESSING: 'Procesando', COMPLETED: 'Listo', FAILED: 'Error', CANCELLED: 'Cancelado' })[status]; }
-function stageLabel(stage: string | undefined, status: VideoProcessingJob['status']) { if (!stage) return processingLabel(status); if (stage.startsWith('GENERATING_HLS_')) return `Generando ${stage.replace('GENERATING_HLS_', '').replace('P', 'p')}`; return ({ QUEUED: 'Archivo subido · en cola', PROBING: 'Analizando video', PREPARING: 'Preparando conversion', EXTRACTING_SUBTITLES: 'Extrayendo subtitulos', GENERATING_THUMBNAIL: 'Generando miniatura', VALIDATING: 'Validando salida', UPLOADING_OUTPUT: 'Guardando salida HLS', AWAITING_ASSOCIATION: 'Procesado · pendiente de asociar', ASSOCIATING: 'Asociando al contenido', COMPLETED: 'Procesamiento completado', FAILED: 'Procesamiento fallido', CANCELLED: 'Procesamiento cancelado' } as Record<string, string>)[stage] ?? stage; }
 function jsonCodecs(value: unknown) { return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string').join(', ') || 'sin audio' : 'detectando'; }

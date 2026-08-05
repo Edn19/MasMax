@@ -48,6 +48,17 @@ export class VideoProcessingService implements OnModuleDestroy {
     return jobs.map((job) => this.present(job));
   }
 
+  async listActive() {
+    const jobs = await this.prisma.videoProcessingJob.findMany({ where: { status: { in: ['QUEUED', 'PROCESSING'] } }, include: this.mediaInclude(), orderBy: { createdAt: 'desc' } });
+    return jobs.map((job) => this.present(job));
+  }
+
+  async byTarget(targetType: VideoProcessingTargetType, targetId: string) {
+    await this.assertTarget(targetType, targetId);
+    const job = await this.prisma.videoProcessingJob.findFirst({ where: { targetType, targetId }, include: this.mediaInclude(), orderBy: { createdAt: 'desc' } });
+    return job ? this.present(job) : null;
+  }
+
   async get(id: string) { return this.present(await this.find(id)); }
 
   async retry(id: string) {
@@ -78,9 +89,17 @@ export class VideoProcessingService implements OnModuleDestroy {
   }
 
   async configure(id: string, dto: ConfigureVideoProcessingDto) {
-    await this.find(id);
-    const updated = await this.prisma.videoProcessingJob.update({ where: { id }, data: { retainOriginal: dto.retainOriginal }, include: this.mediaInclude() });
-    if (!dto.retainOriginal && updated.status === 'COMPLETED' && updated.associatedAt) await this.removeOriginalAfterAssociation(updated);
+    const current = await this.find(id);
+    const hasTarget = dto.targetType !== undefined || dto.targetId !== undefined;
+    if (dto.retainOriginal === undefined && !hasTarget) throw new BadRequestException('Indica una configuracion para actualizar');
+    if (hasTarget) {
+      if (!dto.targetType || !dto.targetId) throw new BadRequestException('Indica targetType y targetId');
+      await this.assertTarget(dto.targetType, dto.targetId);
+      if (current.associatedAt && (current.targetType !== dto.targetType || current.targetId !== dto.targetId)) throw new ConflictException('El trabajo ya esta asociado a otro contenido');
+    }
+    const updated = await this.prisma.videoProcessingJob.update({ where: { id }, data: { retainOriginal: dto.retainOriginal, targetType: dto.targetType, targetId: dto.targetId }, include: this.mediaInclude() });
+    if (dto.targetType && dto.targetId && updated.status === 'COMPLETED' && !updated.associatedAt) return this.associate(id, { targetType: dto.targetType, targetId: dto.targetId });
+    if (dto.retainOriginal === false && updated.status === 'COMPLETED' && updated.associatedAt) await this.removeOriginalAfterAssociation(updated);
     return this.get(id);
   }
 
@@ -140,7 +159,7 @@ export class VideoProcessingService implements OnModuleDestroy {
   }
 
   private mediaInclude() { return { inputMediaFile: { select: { id: true, originalName: true, relativePath: true, status: true, width: true, height: true, durationSec: true, extension: true, videoCodec: true, audioCodec: true } }, outputMediaFile: { select: { id: true, relativePath: true } } } as const; }
-  private present(job: JobWithMedia) { return { id: job.id, status: job.status, progress: job.progress, stage: job.processingStage, profiles: job.profiles, generatedQualities: job.generatedQualities, attempts: job.attempts, errorMessage: job.errorMessage, retainOriginal: job.retainOriginal, cancelRequested: job.cancelRequested, sourceFormat: job.sourceFormat, sourceVideoCodec: job.sourceVideoCodec, sourceAudioCodecs: job.sourceAudioCodecs, sourceWidth: job.sourceWidth, sourceHeight: job.sourceHeight, durationSec: job.durationSec, audioTracks: job.audioTracks, subtitleTracks: job.subtitleTracks, targetType: job.targetType, targetId: job.targetId, associatedAt: job.associatedAt, masterUrl: job.masterPath ? this.storage.publicUrl(job.masterPath) : null, thumbnailUrl: job.thumbnailPath ? this.storage.publicUrl(job.thumbnailPath) : null, input: job.inputMediaFile, outputMediaId: job.outputMediaFileId, createdAt: job.createdAt, startedAt: job.startedAt, completedAt: job.completedAt, updatedAt: job.updatedAt }; }
+  private present(job: JobWithMedia) { return { id: job.id, requestedById: job.requestedById, originalName: job.inputMediaFile.originalName, status: job.status, progress: job.progress, stage: job.processingStage, profiles: job.profiles, generatedQualities: job.generatedQualities, attempts: job.attempts, errorMessage: job.errorMessage, retainOriginal: job.retainOriginal, cancelRequested: job.cancelRequested, sourceFormat: job.sourceFormat, sourceVideoCodec: job.sourceVideoCodec, sourceAudioCodecs: job.sourceAudioCodecs, sourceWidth: job.sourceWidth, sourceHeight: job.sourceHeight, durationSec: job.durationSec, audioTracks: job.audioTracks, subtitleTracks: job.subtitleTracks, targetType: job.targetType, targetId: job.targetId, associatedAt: job.associatedAt, masterUrl: job.masterPath ? this.storage.publicUrl(job.masterPath) : null, outputUrl: job.masterPath ? this.storage.publicUrl(job.masterPath) : null, thumbnailUrl: job.thumbnailPath ? this.storage.publicUrl(job.thumbnailPath) : null, input: job.inputMediaFile, outputMediaId: job.outputMediaFileId, createdAt: job.createdAt, startedAt: job.startedAt, completedAt: job.completedAt, updatedAt: job.updatedAt }; }
 
   private async assertTarget(targetType?: VideoProcessingTargetType, targetId?: string) {
     if (!targetType || !targetId) throw new BadRequestException('Indica targetType y targetId');

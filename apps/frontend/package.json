@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build --configLoader runner",
     "preview": "vite preview --host 0.0.0.0",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/admin/components/admin-utils.spec.ts src/admin/components/admin-forms.spec.tsx src/components/navigation.spec.tsx src/components/player/player-preferences.spec.ts src/lib/comment-feedback.spec.ts src/lib/pending-progress.spec.ts src/lib/resumable-upload.spec.ts src/lib/ui.spec.ts src/lib/video-upload-policy.spec.ts"
+    "test": "tsx --test src/admin/components/admin-utils.spec.ts src/admin/components/admin-forms.spec.tsx src/components/navigation.spec.tsx src/components/player/player-preferences.spec.ts src/lib/comment-feedback.spec.ts src/lib/pending-progress.spec.ts src/lib/resumable-upload.spec.ts src/lib/ui.spec.ts src/lib/video-processing-state.spec.ts src/lib/video-upload-policy.spec.ts"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",

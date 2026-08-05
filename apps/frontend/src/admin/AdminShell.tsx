@@ -4,6 +4,8 @@ import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { useSiteSettings } from '../lib/site-settings';
 import { isNavigationPathActive } from '../lib/ui';
+import { useVideoProcessingJobs } from '../lib/video-processing-jobs';
+import { processingStageLabel } from '../lib/video-processing-state';
 
 const groups = [
   { label: 'General', links: [{ to: '/admin', label: 'Dashboard', icon: BarChart3, end: true }] },
@@ -20,6 +22,8 @@ const groups = [
 export function AdminShell() {
   const location = useLocation();
   const settings = useSiteSettings();
+  const processing = useVideoProcessingJobs();
+  const currentJob = processing.activeJobs[0];
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('masmax:admin-sidebar-collapsed') === 'true');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
@@ -53,7 +57,7 @@ export function AdminShell() {
         <nav className="admin-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">
           {groups.map((group) => <div key={group.label} className="mb-4">
             {!collapsed && <button type="button" className="flex w-full items-center justify-between px-3 pb-1.5 text-[.68rem] font-semibold uppercase tracking-[0.16em] text-slate-500 hover:text-slate-300" aria-expanded={openGroups[group.label]} onClick={() => setOpenGroups((current) => ({ ...current, [group.label]: !current[group.label] }))}><span>{group.label}</span><ChevronDown size={13} className={`transition ${openGroups[group.label] ? 'rotate-180' : ''}`} /></button>}
-            {(collapsed || openGroups[group.label]) && <div className="grid gap-1">{group.links.map((link) => { const Icon = link.icon; return <NavLink key={link.to} to={link.to} end={link.end} title={collapsed ? link.label : undefined} className={({ isActive }) => `flex min-h-11 items-center rounded-xl text-sm font-medium transition ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'} ${isActive ? 'bg-brand text-ink shadow-[0_8px_24px_rgba(34,211,238,.12)]' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}><Icon size={18} /><span className={collapsed ? 'sr-only' : ''}>{link.label}</span></NavLink>; })}</div>}
+            {(collapsed || openGroups[group.label]) && <div className="grid gap-1">{group.links.map((link) => { const Icon = link.icon; const count = link.to === '/admin/processing' ? processing.activeJobs.length : 0; return <NavLink key={link.to} to={link.to} end={link.end} title={collapsed ? `${link.label}${count ? ` (${count})` : ''}` : undefined} className={({ isActive }) => `relative flex min-h-11 items-center rounded-xl text-sm font-medium transition ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'} ${isActive ? 'bg-brand text-ink shadow-[0_8px_24px_rgba(34,211,238,.12)]' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}><Icon size={18} /><span className={collapsed ? 'sr-only' : ''}>{link.label}{count ? ` (${count})` : ''}</span>{collapsed && count > 0 && <span className="absolute right-1 top-1 grid h-5 min-w-5 place-items-center rounded-full bg-coral px-1 text-[10px] font-bold text-white">{count}</span>}</NavLink>; })}</div>}
           </div>)}
         </nav>
         <p className={`${collapsed ? 'sr-only' : 'px-3'} pt-2 text-xs text-slate-600`}>Panel administrativo · v{import.meta.env.VITE_APP_VERSION ?? '2.0.0'}</p>
@@ -61,6 +65,7 @@ export function AdminShell() {
 
       <main id="main-content" tabIndex={-1} className="min-w-0 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
         <nav aria-label="Migas de pan" className="mb-4 text-xs text-slate-500"><Link to="/admin" className="hover:text-brand">Administracion</Link><span aria-hidden="true"> / </span><span aria-current="page" className="text-slate-300">{active?.label ?? 'Panel'}</span></nav>
+        {currentJob && <Link to="/admin/processing" className="mb-5 block rounded-xl border border-brand/30 bg-brand/5 p-3 transition hover:border-brand/60" aria-label={`Ver procesamiento de ${currentJob.input.originalName}`}><div className="flex items-center justify-between gap-4 text-sm"><div className="min-w-0"><p className="truncate font-semibold text-white">{currentJob.input.originalName}</p><p className="mt-0.5 text-xs text-slate-400">{processingStageLabel(currentJob.stage, currentJob.status)}</p></div><strong className="shrink-0 text-brand">{currentJob.progress}%</strong></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ink"><div className="h-full bg-brand transition-[width]" style={{ width: `${currentJob.progress}%` }} /></div></Link>}
         <Outlet />
       </main>
     </div>

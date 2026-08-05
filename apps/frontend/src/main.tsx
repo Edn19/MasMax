@@ -8,6 +8,7 @@ import { AdminRoute, ProtectedRoute } from './components/ProtectedRoute';
 import { AuthProvider } from './lib/auth';
 import { registerServiceWorker } from './lib/pwa';
 import { SiteSettingsProvider } from './lib/site-settings';
+import { VideoProcessingJobsProvider } from './lib/video-processing-jobs';
 
 const AdminLogin = lazyNamed(() => import('./admin/AdminLogin'), 'AdminLogin');
 const AdminShell = lazyNamed(() => import('./admin/AdminShell'), 'AdminShell');
@@ -91,11 +92,13 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <AppErrorBoundary>
       <BackendGate>
         <AuthProvider>
-          <SiteSettingsProvider>
-            <Suspense fallback={<main className="mx-auto min-h-screen max-w-7xl px-4 py-24"><LoadingBlock label="Cargando pagina" /></main>}>
-              <RouterProvider router={router} />
-            </Suspense>
-          </SiteSettingsProvider>
+          <VideoProcessingJobsProvider>
+            <SiteSettingsProvider>
+              <Suspense fallback={<main className="mx-auto min-h-screen max-w-7xl px-4 py-24"><LoadingBlock label="Cargando pagina" /></main>}>
+                <RouterProvider router={router} />
+              </Suspense>
+            </SiteSettingsProvider>
+          </VideoProcessingJobsProvider>
         </AuthProvider>
       </BackendGate>
     </AppErrorBoundary>
