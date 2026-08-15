@@ -20,6 +20,7 @@ export class MediaService {
       : await this.prisma.movie.findFirst({ where: publishedMovieWhere({ id: dto.movieId }), select: { videoUrl: true, processedVideoUrl: true, originalVideoUrl: true } });
     if (!resource) throw new NotFoundException('Contenido no encontrado');
     const mediaUrl = resource.processedVideoUrl || resource.videoUrl;
+    if (!mediaUrl) throw new NotFoundException('El video del contenido aun no esta disponible');
     const path = this.storage.keyFromUrl(mediaUrl);
     const expires = Math.floor(Date.now() / 1000) + Number(this.config.get<string>('MEDIA_URL_EXPIRES_SECONDS') ?? 300);
     const hls = path?.match(/^hls\/([a-zA-Z0-9_-]+)\/master\.m3u8$/);

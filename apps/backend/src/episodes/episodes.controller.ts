@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, Ip, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { AdminGuard } from '../common/admin.guard';
+import { CurrentUser, JwtUser } from '../common/current-user.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import {
   BulkCreateEpisodesDto,
@@ -46,6 +47,12 @@ export class EpisodesController {
   }
 
   @UseGuards(JwtAuthGuard, AdminGuard)
+  @Get('admin/episodes/:id')
+  adminById(@Param('id') id: string) {
+    return this.episodes.adminById(id);
+  }
+
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @Get('admin/seasons/:seasonId/episode-gaps')
   gaps(@Param('seasonId') seasonId: string) {
     return this.episodes.gaps(seasonId);
@@ -53,8 +60,8 @@ export class EpisodesController {
 
   @UseGuards(JwtAuthGuard, AdminGuard)
   @Post('admin/episodes')
-  create(@Body() dto: CreateEpisodeDto) {
-    return this.episodes.create(dto);
+  create(@CurrentUser() user: JwtUser, @Body() dto: CreateEpisodeDto) {
+    return this.episodes.create(dto, user.sub);
   }
 
   @UseGuards(JwtAuthGuard, AdminGuard)
@@ -95,8 +102,8 @@ export class EpisodesController {
 
   @UseGuards(JwtAuthGuard, AdminGuard)
   @Patch('admin/episodes/:id')
-  update(@Param('id') id: string, @Body() dto: UpdateEpisodeDto) {
-    return this.episodes.update(id, dto);
+  update(@CurrentUser() user: JwtUser, @Param('id') id: string, @Body() dto: UpdateEpisodeDto) {
+    return this.episodes.update(id, dto, user.sub);
   }
 
   @UseGuards(JwtAuthGuard, AdminGuard)

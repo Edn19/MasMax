@@ -10,6 +10,14 @@ export function uploadLimitMessage(requestUrl: string) {
     : 'El archivo supera el limite de subida configurado.';
 }
 
+export function seasonUpdateValidationMessage(requestUrl: string, message: string | string[]) {
+  const messages = Array.isArray(message) ? message : [message];
+  const isSeasonUpdate = /^\/api\/admin\/seasons\/[^/?]+/.test(requestUrl);
+  return isSeasonUpdate && messages.some((item) => /^property .+ should not exist$/.test(item))
+    ? 'No se pudo actualizar la temporada porque se enviaron datos no permitidos.'
+    : message;
+}
+
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(GlobalExceptionFilter.name);
@@ -35,6 +43,13 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         message = (body as { message: string | string[] }).message;
       }
       code = status === 400 ? 'VALIDATION_ERROR' : `HTTP_${status}`;
+      if (status === HttpStatus.BAD_REQUEST) {
+        const publicMessage = seasonUpdateValidationMessage(request.originalUrl, message);
+        if (publicMessage !== message) {
+          this.logger.warn(`${request.method} ${request.url} requestId=${requestId} validation=${JSON.stringify(message)}`);
+          message = publicMessage;
+        }
+      }
       if (status === HttpStatus.PAYLOAD_TOO_LARGE) {
         code = 'LIMIT_FILE_SIZE';
         message = uploadLimitMessage(request.originalUrl);

@@ -8,18 +8,22 @@ import { ObjectStorageService } from '../storage/object-storage.service';
 export class StorageService {
   constructor(private readonly prisma: PrismaService, private readonly config: ConfigService, private readonly objects: ObjectStorageService) {}
   async stats() {
-    const [aggregate, byType, processing, failed, all, disk] = await Promise.all([
+    const [aggregate, byType, processing, failed, all, disk, temporaryUploads] = await Promise.all([
       this.prisma.mediaFile.aggregate({ where: { status: { not: MediaStatus.DELETED } }, _sum: { sizeBytes: true }, _count: true }),
       this.prisma.mediaFile.groupBy({ by: ['mediaType'], where: { status: { not: MediaStatus.DELETED } }, _sum: { sizeBytes: true }, _count: true }),
       this.prisma.mediaFile.count({ where: { status: { in: [MediaStatus.VALIDATING, MediaStatus.QUEUED, MediaStatus.PROCESSING] } } }),
       this.prisma.mediaFile.count({ where: { status: MediaStatus.FAILED } }),
-      this.prisma.mediaFile.findMany({ where: { status: { not: MediaStatus.DELETED } }, select: { id: true, relativePath: true, createdAt: true, sizeBytes: true } }),
+      this.prisma.mediaFile.findMany({ where: { status: { not: MediaStatus.DELETED } }, select: { id: true, relativePath: true, createdAt: true, sizeBytes: true, mediaType: true } }),
       this.objects.freeBytes(),
+      this.prisma.resumableUpload.findMany({ where: { status: { in: ['INITIATED', 'UPLOADING', 'ASSEMBLING'] } }, select: { sizeBytes: true, uploadedParts: true, totalChunks: true } }),
     ]);
     const references = await this.references();
     const orphaned = all.filter((file) => !references.has(file.relativePath));
     const videoGroup = byType.find((group) => group.mediaType === MediaType.VIDEO);
     const imageGroup = byType.find((group) => group.mediaType === MediaType.IMAGE);
+    const originals = all.filter((file) => file.mediaType === MediaType.VIDEO && !file.relativePath.startsWith('hls/'));
+    const hls = all.filter((file) => file.relativePath.startsWith('hls/'));
+    const temporaryBytes = temporaryUploads.reduce((sum, upload) => sum + (upload.totalChunks ? upload.sizeBytes * BigInt(upload.uploadedParts.length) / BigInt(upload.totalChunks) : 0n), 0n);
     return {
       totalBytes: (aggregate._sum.sizeBytes ?? 0n).toString(),
       totalFiles: aggregate._count,
@@ -27,6 +31,12 @@ export class StorageService {
       videoBytes: (videoGroup?._sum.sizeBytes ?? 0n).toString(),
       images: imageGroup?._count ?? 0,
       imageBytes: (imageGroup?._sum.sizeBytes ?? 0n).toString(),
+      originals: originals.length,
+      originalBytes: originals.reduce((sum, file) => sum + file.sizeBytes, 0n).toString(),
+      hls: hls.length,
+      hlsBytes: hls.reduce((sum, file) => sum + file.sizeBytes, 0n).toString(),
+      temporaries: temporaryUploads.length,
+      temporaryBytes: temporaryBytes.toString(),
       processing,
       failed,
       orphaned: orphaned.length,

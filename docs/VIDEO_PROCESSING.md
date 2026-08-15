@@ -65,12 +65,42 @@ El panel `/admin/processing` muestra estado, porcentaje, perfiles, intentos y sa
 
 - `GET /api/admin/video-processing`
 - `GET /api/admin/video-processing/worker-health`
+- `GET /api/admin/video-processing/jobs/available`
 - `GET /api/admin/video-processing/:id`
 - `POST /api/admin/video-processing/media/:mediaFileId`
 - `POST /api/admin/video-processing/:id/retry`
 - `POST /api/admin/video-processing/:id/associate`
 - `PATCH /api/admin/video-processing/:id/settings`
 - `DELETE /api/admin/video-processing/:id`
+
+## Vinculacion con episodios
+
+La carga devuelve inmediatamente `processingJob.id`. El formulario puede enviar ese valor como `processingJobId` al crear o editar un episodio. La creacion y la reserva del job ocurren en una transaccion serializable: valida propietario, estado, temporada y destino antes de guardar `targetType=EPISODE` y `targetId=<episodeId>`.
+
+`QUEUED` y `PROCESSING` son referencias validas, pero fuerzan el episodio a borrador y dejan `videoUrl` nulo hasta completar. `COMPLETED` aplica la URL `master.m3u8` inmediatamente. El worker relee el destino despues de persistir la salida para que una vinculacion concurrente no quede en `AWAITING_ASSOCIATION`. La creacion de subtitulos y la marca `associatedAt` son idempotentes.
+
+El endpoint `jobs/available` solo devuelve trabajos del usuario autenticado, sin destino, utilizables y no cancelados ni fallidos. La lista general de `/admin/processing` conserva los demas para diagnostico y reintento.
+
+No se publica contenido sin video listo. En un reemplazo, el video actual permanece disponible mientras el nuevo job procesa y solo se sustituye cuando HLS termina correctamente.
+
+### Detectar trabajos sin asignar
+
+No elimines automaticamente los resultados. Revisa primero:
+
+```sql
+SELECT id, "requestedById", status, "processingStage", "inputMediaFileId", "createdAt"
+FROM "VideoProcessingJob"
+WHERE "targetId" IS NULL
+ORDER BY "createdAt" DESC;
+
+SELECT j.id, j."targetType", j."targetId"
+FROM "VideoProcessingJob" j
+LEFT JOIN "Episode" e ON j."targetType" = 'EPISODE' AND e.id = j."targetId"
+LEFT JOIN "Movie" m ON j."targetType" = 'MOVIE' AND m.id = j."targetId"
+WHERE j."targetId" IS NOT NULL
+  AND ((j."targetType" = 'EPISODE' AND e.id IS NULL)
+    OR (j."targetType" = 'MOVIE' AND m.id IS NULL));
+```
 
 ## Almacenamiento
 

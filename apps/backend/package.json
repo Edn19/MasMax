@@ -11,7 +11,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run --passWithNoTests --maxWorkers=1 --minWorkers=1",
     "prisma:seed": "node dist/prisma/seed-admin.js",
     "prisma:seed:admin": "node dist/prisma/seed-admin.js",
     "prisma:seed:demo": "node dist/prisma/seed.js",

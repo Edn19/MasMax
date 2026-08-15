@@ -81,6 +81,22 @@ export type Episode = {
   series?: Series;
   season?: Season;
   subtitles?: SubtitleTrack[];
+  processingJob?: EpisodeProcessingJob | null;
+};
+
+export type EpisodeProcessingJob = {
+  id: string;
+  status: 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  progress: number;
+  stage: string;
+  originalName: string;
+  targetType?: 'EPISODE' | null;
+  targetId?: string | null;
+  masterUrl?: string | null;
+  thumbnailUrl?: string | null;
+  errorMessage?: string | null;
+  createdAt: string;
+  updatedAt?: string;
 };
 
 export type Movie = {
@@ -166,6 +182,7 @@ export type Stats = {
     orphaned: number;
     recentErrors: Array<{ id: string; originalName: string; errorMessage?: string; updatedAt: string }>;
   };
+  mediaSummary: { active: number; failed: number; completed: number; unassigned: number; published: number; drafts: number };
   storage: {
     totalBytes: string;
     totalFiles: number;
@@ -173,6 +190,12 @@ export type Stats = {
     videoBytes: string;
     images: number;
     imageBytes: string;
+    originals: number;
+    originalBytes: string;
+    hls: number;
+    hlsBytes: string;
+    temporaries: number;
+    temporaryBytes: string;
     processing: number;
     failed: number;
     orphaned: number;

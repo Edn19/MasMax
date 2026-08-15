@@ -82,6 +82,12 @@ export class AuditInterceptor implements NestInterceptor {
     else if (/\/video-processing\/media\/[^/]+$/.test(path)) action = 'VIDEO_PROCESSING_QUEUED';
     else if (/\/video-processing\/[^/]+\/retry$/.test(path)) action = 'VIDEO_PROCESSING_RETRIED';
     else if (resource === 'video-processing' && request.method === 'DELETE') action = 'VIDEO_PROCESSING_CANCELLED';
+    else if (/\/media\/[^/]+\/publish$/.test(path)) action = 'CONTENT_PUBLISHED';
+    else if (/\/media\/[^/]+\/unpublish$/.test(path)) action = 'CONTENT_UNPUBLISHED';
+    else if (/\/media\/[^/]+\/retry$/.test(path)) action = 'VIDEO_PROCESSING_RETRIED';
+    else if (/\/media\/[^/]+\/cancel$/.test(path)) action = 'VIDEO_PROCESSING_CANCELLED';
+    else if (/\/media\/[^/]+\/hls$/.test(path)) action = 'HLS_DELETED';
+    else if (/\/media\/[^/]+\/original$/.test(path)) action = 'ORIGINAL_MEDIA_DELETED';
     else if (request.method === 'PATCH' && body.published !== undefined) action = body.published === true ? 'CONTENT_PUBLISHED' : 'CONTENT_UNPUBLISHED';
     else if (request.method === 'PATCH' && body.status === 'PUBLISHED') action = 'CONTENT_PUBLISHED';
     else if (request.method === 'PATCH' && ['DRAFT', 'HIDDEN'].includes(String(body.status))) action = 'CONTENT_UNPUBLISHED';

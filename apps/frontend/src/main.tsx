@@ -18,6 +18,7 @@ const SeasonsAdminPage = lazyNamed(() => import('./admin/seasons/SeasonsAdminPag
 const EpisodesAdminPage = lazyNamed(() => import('./admin/episodes/EpisodesAdminPage'), 'EpisodesAdminPage');
 const SubtitlesAdminPage = lazyNamed(() => import('./admin/subtitles/SubtitlesAdminPage'), 'SubtitlesAdminPage');
 const VideoProcessingAdminPage = lazyNamed(() => import('./admin/processing/VideoProcessingAdminPage'), 'VideoProcessingAdminPage');
+const MediaLibraryAdminPage = lazyNamed(() => import('./admin/media/MediaLibraryAdminPage'), 'MediaLibraryAdminPage');
 const MoviesAdminPage = lazyNamed(() => import('./admin/movies/MoviesAdminPage'), 'MoviesAdminPage');
 const GenresAdminPage = lazyNamed(() => import('./admin/genres/GenresAdminPage'), 'GenresAdminPage');
 const UsersAdminPage = lazyNamed(() => import('./admin/users/UsersAdminPage'), 'UsersAdminPage');
@@ -72,6 +73,7 @@ const router = createBrowserRouter([{
           { path: 'episodes', element: <EpisodesAdminPage /> },
           { path: 'subtitles', element: <SubtitlesAdminPage /> },
           { path: 'processing', element: <VideoProcessingAdminPage /> },
+          { path: 'media', element: <MediaLibraryAdminPage /> },
           { path: 'movies', element: <MoviesAdminPage /> },
           { path: 'genres', element: <GenresAdminPage /> },
           { path: 'users', element: <UsersAdminPage /> },

@@ -33,7 +33,10 @@ export class VideoProcessingService implements OnModuleDestroy {
     }
     if (options.targetType || options.targetId) await this.assertTarget(options.targetType, options.targetId);
     const active = await this.prisma.videoProcessingJob.findFirst({ where: { inputMediaFileId: media.id, status: { in: ['QUEUED', 'PROCESSING'] } }, include: this.mediaInclude() });
-    if (active) return this.present(active);
+    if (active) {
+      if (active.requestedById !== requestedById) throw new ConflictException('El archivo ya pertenece a otro trabajo de procesamiento');
+      return this.present(active);
+    }
     const retainOriginal = options.retainOriginal ?? String(this.config.get<string>('VIDEO_KEEP_ORIGINAL_DEFAULT') ?? this.config.get<string>('KEEP_ORIGINAL_VIDEO') ?? 'true').toLowerCase() === 'true';
     const job = await this.prisma.$transaction(async (tx) => {
       const created = await tx.videoProcessingJob.create({ data: { requestedById, inputMediaFileId: media.id, retainOriginal, attempts: 1, processingStage: 'QUEUED', targetType: options.targetType, targetId: options.targetId, sourceWidth: media.width, sourceHeight: media.height, durationSec: media.durationSec, sourceVideoCodec: media.videoCodec, sourceAudioCodecs: media.audioCodec ? [media.audioCodec] : [] } });
@@ -51,6 +54,15 @@ export class VideoProcessingService implements OnModuleDestroy {
   async listActive() {
     const jobs = await this.prisma.videoProcessingJob.findMany({ where: { status: { in: ['QUEUED', 'PROCESSING'] } }, include: this.mediaInclude(), orderBy: { createdAt: 'desc' } });
     return jobs.map((job) => this.present(job));
+  }
+
+  async listAvailable(requestedById: string) {
+    const jobs = await this.prisma.videoProcessingJob.findMany({
+      where: { requestedById, targetType: null, targetId: null, status: { in: ['QUEUED', 'PROCESSING', 'COMPLETED'] } },
+      include: this.mediaInclude(),
+      orderBy: { createdAt: 'desc' },
+    });
+    return jobs.filter((job) => job.status !== 'COMPLETED' || Boolean(job.masterPath)).map((job) => this.present(job));
   }
 
   async byTarget(targetType: VideoProcessingTargetType, targetId: string) {
@@ -88,25 +100,34 @@ export class VideoProcessingService implements OnModuleDestroy {
     return this.get(id);
   }
 
-  async configure(id: string, dto: ConfigureVideoProcessingDto) {
-    const current = await this.find(id);
+  async configure(id: string, dto: ConfigureVideoProcessingDto, requestedById: string) {
+    const current = await this.findOwned(id, requestedById);
     const hasTarget = dto.targetType !== undefined || dto.targetId !== undefined;
     if (dto.retainOriginal === undefined && !hasTarget) throw new BadRequestException('Indica una configuracion para actualizar');
     if (hasTarget) {
       if (!dto.targetType || !dto.targetId) throw new BadRequestException('Indica targetType y targetId');
       await this.assertTarget(dto.targetType, dto.targetId);
-      if (current.associatedAt && (current.targetType !== dto.targetType || current.targetId !== dto.targetId)) throw new ConflictException('El trabajo ya esta asociado a otro contenido');
+      if ((current.targetType || current.targetId) && (current.targetType !== dto.targetType || current.targetId !== dto.targetId)) throw new ConflictException('El trabajo ya esta asociado a otro contenido');
     }
     const updated = await this.prisma.videoProcessingJob.update({ where: { id }, data: { retainOriginal: dto.retainOriginal, targetType: dto.targetType, targetId: dto.targetId }, include: this.mediaInclude() });
-    if (dto.targetType && dto.targetId && updated.status === 'COMPLETED' && !updated.associatedAt) return this.associate(id, { targetType: dto.targetType, targetId: dto.targetId });
+    if (dto.targetType && dto.targetId && updated.status === 'COMPLETED' && !updated.associatedAt) return this.associate(id, { targetType: dto.targetType, targetId: dto.targetId }, requestedById);
     if (dto.retainOriginal === false && updated.status === 'COMPLETED' && updated.associatedAt) await this.removeOriginalAfterAssociation(updated);
     return this.get(id);
   }
 
-  async associate(id: string, dto: AssociateVideoProcessingDto) {
-    const current = await this.find(id);
+  async associate(id: string, dto: AssociateVideoProcessingDto, requestedById: string) {
+    return this.associateInternal(id, dto, requestedById);
+  }
+
+  async associateAsAdmin(id: string, dto: AssociateVideoProcessingDto, _adminId: string) {
+    return this.associateInternal(id, dto);
+  }
+
+  private async associateInternal(id: string, dto: AssociateVideoProcessingDto, requestedById?: string) {
+    const current = requestedById ? await this.findOwned(id, requestedById) : await this.find(id);
     if (current.status !== 'COMPLETED' || !current.masterPath) throw new ConflictException('El HLS debe estar completado antes de asociarlo');
     await this.assertTarget(dto.targetType, dto.targetId);
+    if ((current.targetType || current.targetId) && (current.targetType !== dto.targetType || current.targetId !== dto.targetId)) throw new ConflictException('El trabajo ya esta asociado a otro contenido');
     const videoUrl = this.storage.publicUrl(current.masterPath);
     const thumbnailUrl = current.thumbnailPath ? this.storage.publicUrl(current.thumbnailPath) : undefined;
     const subtitles = this.extractedSubtitles(current.subtitleTracks);
@@ -154,6 +175,12 @@ export class VideoProcessingService implements OnModuleDestroy {
 
   private async find(id: string) {
     const job = await this.prisma.videoProcessingJob.findUnique({ where: { id }, include: this.mediaInclude() });
+    if (!job) throw new NotFoundException('Trabajo de procesamiento no encontrado');
+    return job;
+  }
+
+  private async findOwned(id: string, requestedById: string) {
+    const job = await this.prisma.videoProcessingJob.findFirst({ where: { id, requestedById }, include: this.mediaInclude() });
     if (!job) throw new NotFoundException('Trabajo de procesamiento no encontrado');
     return job;
   }

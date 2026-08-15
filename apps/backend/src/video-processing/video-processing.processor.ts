@@ -100,13 +100,13 @@ export class VideoProcessingProcessor {
       await this.storage.putFile(thumbnailKey, thumbnailPath, { contentType: 'image/jpeg' });
       uploadedKeys.push(thumbnailKey);
       const masterKey = `hls/${id}/master.m3u8`;
-      const destination = await this.prisma.videoProcessingJob.findUnique({ where: { id }, select: { targetType: true, targetId: true } });
       const output = await this.prisma.$transaction(async (tx) => {
         const outputMedia = await tx.mediaFile.create({ data: { originalName: `${current.inputMediaFile.originalName} (HLS)`, storageName: `${id}-master.m3u8`, relativePath: masterKey, mimeType: 'application/vnd.apple.mpegurl', extension: '.m3u8', sizeBytes: BigInt(totalSize), mediaType: MediaType.VIDEO, status: MediaStatus.READY, width: sourceWidth, height: sourceHeight, durationSec, videoCodec: 'h264', audioCodec: metadata.audioTracks.length ? 'aac' : null } });
         await tx.mediaFile.create({ data: { originalName: `${current.inputMediaFile.originalName} (miniatura)`, storageName: `${id}-thumbnail.jpg`, relativePath: thumbnailKey, mimeType: 'image/jpeg', extension: '.jpg', sizeBytes: BigInt(thumbnailSize), mediaType: MediaType.IMAGE, status: MediaStatus.READY } });
         for (const subtitle of extractedSubtitles) await tx.mediaFile.create({ data: { originalName: subtitle.originalName, storageName: basename(subtitle.key), relativePath: subtitle.key, mimeType: 'text/vtt', extension: '.vtt', sizeBytes: BigInt(subtitle.size), mediaType: MediaType.SUBTITLE, status: MediaStatus.READY } });
-        return tx.videoProcessingJob.update({ where: { id }, data: { outputMediaFileId: outputMedia.id, masterPath: masterKey, thumbnailPath: thumbnailKey, generatedQualities: profiles, subtitleTracks: this.json(extractedSubtitles.map(({ key: _key, size: _size, ...track }) => track)), status: 'COMPLETED', processingStage: destination?.targetType && destination.targetId ? 'ASSOCIATING' : 'AWAITING_ASSOCIATION', progress: 99, completedAt: new Date(), cancelRequested: false } });
+        return tx.videoProcessingJob.update({ where: { id }, data: { outputMediaFileId: outputMedia.id, masterPath: masterKey, thumbnailPath: thumbnailKey, generatedQualities: profiles, subtitleTracks: this.json(extractedSubtitles.map(({ key: _key, size: _size, ...track }) => track)), status: 'COMPLETED', processingStage: 'AWAITING_ASSOCIATION', progress: 99, completedAt: new Date(), cancelRequested: false } });
       });
+      const destination = await this.prisma.videoProcessingJob.findUnique({ where: { id }, select: { targetType: true, targetId: true } });
       if (destination?.targetType && destination.targetId) await this.associateOutput(id, destination.targetType, destination.targetId, masterKey, thumbnailKey, durationSec, extractedSubtitles);
       if (!output.retainOriginal && destination?.targetType && destination.targetId) await this.deleteOriginal(id, current.inputMediaFileId, current.inputMediaFile.relativePath);
       else await this.prisma.mediaFile.update({ where: { id: current.inputMediaFileId }, data: { status: MediaStatus.READY } });
@@ -213,9 +213,10 @@ export class VideoProcessingProcessor {
       }
       for (const [index, subtitle] of subtitles.entries()) {
         const target = targetType === VideoProcessingTargetType.EPISODE ? { episodeId: targetId } : { movieId: targetId };
-        await tx.subtitleTrack.create({ data: { ...target, language: subtitle.language, label: subtitle.label, url: subtitle.url, originalName: subtitle.originalName, sourceFormat: 'VTT', isDefault: index === 0, isActive: true } });
+        const exists = await tx.subtitleTrack.count({ where: { ...target, language: subtitle.language, url: subtitle.url } });
+        if (!exists) await tx.subtitleTrack.create({ data: { ...target, language: subtitle.language, label: subtitle.label, url: subtitle.url, originalName: subtitle.originalName, sourceFormat: 'VTT', isDefault: index === 0, isActive: true } });
       }
-      await tx.videoProcessingJob.update({ where: { id }, data: { associatedAt: new Date() } });
+      await tx.videoProcessingJob.updateMany({ where: { id, targetType, targetId }, data: { associatedAt: new Date() } });
     });
   }
 

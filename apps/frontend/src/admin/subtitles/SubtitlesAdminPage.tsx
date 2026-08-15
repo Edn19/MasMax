@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { api, apiText, deleteJson, patchJson, uploadForm } from '../../lib/api';
 import { useAsync } from '../../lib/useAsync';
@@ -12,10 +13,12 @@ type AdminEpisodes = { items: Episode[] };
 const emptyForm = { language: 'es', label: 'Espanol', isDefault: false, isForced: false, isActive: true };
 
 export function SubtitlesAdminPage() {
+  const [searchParams] = useSearchParams();
+  const requestedEpisodeId = searchParams.get('episodeId') ?? '';
   const episodes = useAsync<AdminEpisodes>(() => api('/admin/episodes?limit=100'), []);
   const movies = useAsync<Movie[]>(() => api('/admin/movies'), []);
   const [targetType, setTargetType] = useState<'episode' | 'movie'>('episode');
-  const [targetId, setTargetId] = useState('');
+  const [targetId, setTargetId] = useState(requestedEpisodeId);
   const [revision, setRevision] = useState(0);
   const tracks = useAsync<SubtitleTrack[]>(() => targetId ? api(`/admin/subtitles?${targetType}Id=${encodeURIComponent(targetId)}`) : Promise.resolve([]), [targetType, targetId, revision]);
   const [form, setForm] = useState(emptyForm);
@@ -28,7 +31,7 @@ export function SubtitlesAdminPage() {
   const [busy, setBusy] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<SubtitleTrack | null>(null);
   const targets = targetType === 'episode' ? (episodes.data?.items ?? []) : (movies.data ?? []);
-  useEffect(() => { if (!targets.some((item) => item.id === targetId)) setTargetId(targets[0]?.id ?? ''); }, [targetType, targets, targetId]);
+  useEffect(() => { if (targets.length && !targets.some((item) => item.id === targetId)) setTargetId(targets[0].id); }, [targetType, targets, targetId]);
   function reset() { setEditingId(null); setForm(emptyForm); setFile(null); setFileError(''); setProgress(0); setFormOpen(false); }
   function edit(track: SubtitleTrack) { setEditingId(track.id); setFormOpen(true); setForm({ language: track.language, label: track.label, isDefault: track.isDefault, isForced: track.isForced, isActive: track.isActive }); setFile(null); setFileError(''); }
   function refresh() { setRevision((value) => value + 1); }

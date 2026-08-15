@@ -1,5 +1,5 @@
 import { Transform, Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 
 const videoSources = ['LOCAL', 'URL', 'DRIVE', 'HLS', 'EMBED'] as const;
 const videoTypes = ['MP4', 'HLS', 'DRIVE', 'EMBED'] as const;
@@ -10,9 +10,10 @@ export class CreateEpisodeDto {
   @Type(() => Number) @IsInt() @Min(1) episodeNumber!: number;
   @IsString() @MinLength(2) title!: string;
   @IsString() @IsOptional() description?: string;
-  @IsString() @IsNotEmpty() videoUrl!: string;
-  @IsIn(videoSources) videoSource!: 'LOCAL' | 'URL' | 'DRIVE' | 'HLS' | 'EMBED';
-  @IsIn(videoTypes) videoType!: 'MP4' | 'HLS' | 'DRIVE' | 'EMBED';
+  @IsOptional() @IsString() @IsNotEmpty() videoUrl?: string;
+  @IsOptional() @IsIn(videoSources) videoSource?: 'LOCAL' | 'URL' | 'DRIVE' | 'HLS' | 'EMBED';
+  @IsOptional() @IsIn(videoTypes) videoType?: 'MP4' | 'HLS' | 'DRIVE' | 'EMBED';
+  @IsOptional() @IsString() @Matches(/^[a-zA-Z0-9_-]+$/) processingJobId?: string;
   @IsOptional() @IsString() originalVideoUrl?: string;
   @IsOptional() @IsString() processedVideoUrl?: string;
   @IsOptional() @IsString() thumbnailUrl?: string;
@@ -27,7 +28,6 @@ export class CreateEpisodeDto {
 }
 
 export class UpdateEpisodeDto {
-  @IsOptional() @IsString() seriesId?: string;
   @IsOptional() @IsString() seasonId?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) episodeNumber?: number;
   @IsOptional() @IsString() @MinLength(2) title?: string;
@@ -35,6 +35,7 @@ export class UpdateEpisodeDto {
   @IsOptional() @IsString() videoUrl?: string;
   @IsOptional() @IsIn(videoSources) videoSource?: 'LOCAL' | 'URL' | 'DRIVE' | 'HLS' | 'EMBED';
   @IsOptional() @IsIn(videoTypes) videoType?: 'MP4' | 'HLS' | 'DRIVE' | 'EMBED';
+  @IsOptional() @IsString() @Matches(/^[a-zA-Z0-9_-]+$/) processingJobId?: string;
   @IsOptional() @IsString() originalVideoUrl?: string;
   @IsOptional() @IsString() processedVideoUrl?: string;
   @IsOptional() @IsString() thumbnailUrl?: string;
@@ -51,6 +52,8 @@ export class UpdateEpisodeDto {
 export class QueryAdminEpisodesDto {
   @IsOptional() @IsString() seriesId?: string;
   @IsOptional() @IsString() seasonId?: string;
+  @IsOptional() @Transform(({ value }) => typeof value === 'string' ? value.trim() : value) @IsString() @MaxLength(120) search?: string;
+  @IsOptional() @IsIn(['READY', 'MISSING']) videoState?: 'READY' | 'MISSING';
   @IsOptional() @Transform(({ value }) => value === 'true' ? true : value === 'false' ? false : value) @IsBoolean() published?: boolean;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) page = 1;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit = 50;

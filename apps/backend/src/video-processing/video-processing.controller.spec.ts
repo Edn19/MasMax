@@ -10,6 +10,7 @@ describe('VideoProcessingController', () => {
   it.each([
     ['jobs', 'jobs', RequestMethod.GET],
     ['activeJobs', 'jobs/active', RequestMethod.GET],
+    ['availableJobs', 'jobs/available', RequestMethod.GET],
     ['byTarget', 'jobs/by-target/:targetType/:targetId', RequestMethod.GET],
     ['getJob', 'jobs/:id', RequestMethod.GET],
     ['cancelJob', 'jobs/:id/cancel', RequestMethod.POST],

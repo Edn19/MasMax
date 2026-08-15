@@ -26,6 +26,14 @@ La sesion guarda nombre, tamano, MIME, ultima modificacion, partes confirmadas y
 
 Pausar aborta la peticion o espera pendiente. Cancelar tambien informa al backend y elimina las partes temporales. Una parte repetida se acepta sin duplicarla solo cuando tamano y SHA-256 coinciden; una diferencia devuelve conflicto.
 
+## Despues de completar la subida
+
+Completar una sesion crea o recupera un `VideoProcessingJob` persistente y devuelve su ID junto con `mediaId`. Ese ID, y no el objeto `File`, es la referencia que usa el formulario de episodios. El administrador puede guardar el episodio mientras el job esta en cola o procesando.
+
+Si se abandona un formulario nuevo antes de guardar, el job permanece sin destino y aparece en `Usar archivo cargado`. Al recargar no hace falta volver a seleccionar el archivo para estados `QUEUED`, `PROCESSING` o `COMPLETED`; solo una sesion `INITIATED` o `UPLOADING` necesita el archivo local para continuar sus fragmentos.
+
+Al guardar, el backend comprueba que el job pertenece al usuario autenticado y que no fue asignado a otro contenido. Los estados `FAILED` y `CANCELLED` permanecen disponibles en el panel de procesamiento para diagnostico o reintento, pero no se pueden vincular directamente.
+
 ## Integridad y memoria
 
 Cada parte se escribe en `uploads/tmp/resumable/<uploadId>` y se procesa mediante streams. Al finalizar se comprueban todas las partes, sus tamanos, el tamano ensamblado, el checksum final cuando se proporciona y la identidad multimedia con FFprobe. Los temporales solo se limpian tras completar correctamente o cancelar.

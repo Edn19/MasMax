@@ -72,6 +72,24 @@ El backend ejecuta `prisma migrate deploy` al arrancar. Nunca uses `db push` en 
 
 El panel incluye `Administracion > Temporadas` para crear, editar, publicar y eliminar temporadas vacias. Una temporada con episodios activos no se elimina; primero deben revisarse o retirar sus episodios.
 
+Cada serie mantiene su propia numeracion: varias series pueden tener una Temporada 1, pero una misma serie no puede repetir el numero. PostgreSQL aplica la restriccion compuesta `seriesId + number`, creada por la migracion `20260802190000_seasons_and_bulk_episodes`. La creacion recibe la serie seleccionada; la edicion conserva esa relacion y no permite mover la temporada a otra serie. Un duplicado devuelve `La serie ya tiene una temporada con ese numero.`
+
+Antes de modificar una restriccion de temporadas, valida los datos sin borrarlos ni renumerarlos automaticamente:
+
+```sql
+SELECT "seriesId", "number", COUNT(*)
+FROM "Season"
+GROUP BY "seriesId", "number"
+HAVING COUNT(*) > 1;
+
+SELECT s.id, s."seriesId"
+FROM "Season" s
+LEFT JOIN "Series" sr ON sr.id = s."seriesId"
+WHERE sr.id IS NULL;
+```
+
+La instalacion actual ya contiene la restriccion correcta y no requiere una migracion adicional. Consulta `docs/SEASON_UNIQUENESS_AND_UPDATE_FIX.md` para diagnostico y rollback.
+
 En `Administracion > Episodios` selecciona una serie y temporada para crear episodios en lote, reordenarlos, publicar o despublicar una seleccion, copiar configuracion y detectar huecos de numeracion. La importacion CSV valida primero todas las filas y solo habilita el commit cuando no existen errores.
 
 Columnas obligatorias: `season,episode,title,videoUrl`. Columnas opcionales: `description,videoSource,videoType,thumbnailUrl,duration,published,publishedAt`. La operacion admite hasta 500 filas y se confirma dentro de una transaccion, por lo que un error evita datos parciales. Consulta ejemplos y contratos en `docs/API.md`.
@@ -97,6 +115,19 @@ Configura `MAX_VIDEO_UPLOAD_MB`, `RESUMABLE_CHUNK_SIZE_MB`, `RESUMABLE_CHUNK_REQ
 Con `ENABLE_HLS=true`, cada MP4 o MKV local validado pasa a Redis/BullMQ y un worker FFmpeg independiente genera calidades adaptativas, `master.m3u8`, segmentos, subtitulos de texto y miniatura. El panel `/admin/processing` muestra etapa, progreso, codecs y calidades; permite cancelar, reintentar y asociar un resultado recuperado a pelicula o episodio. Los borradores no se publican automaticamente.
 
 El valor recomendado inicial es `VIDEO_WORKER_CONCURRENCY=1`. El original solo se elimina despues de validar y asociar la salida. Configuracion, recursos, retencion, codecs y diagnostico: `docs/VIDEO_PROCESSING.md` y `docs/MKV_HLS.md`.
+
+### Crear episodios con videos en procesamiento
+
+En `Administracion > Episodios`, selecciona serie y temporada y elige una opcion en `Video del episodio`:
+
+- `Subir un video nuevo`: al terminar la subida se conserva `processingJobId`; ya puedes guardar sin esperar a FFmpeg.
+- `Usar archivo cargado`: lista solo jobs propios, sin asignar y en estado `QUEUED`, `PROCESSING` o `COMPLETED`.
+- `Usar URL externa`: mantiene los flujos MP4, HLS, Drive y embed.
+- `Crear episodio sin video`: crea un borrador que debe completarse antes de publicar.
+
+La relacion vive en PostgreSQL mediante `VideoProcessingJob.targetType/targetId`, no en el navegador. Un job activo fuerza borrador; cuando el worker termina aplica HLS, miniatura, duracion y subtitulos al episodio. Recargar o cambiar de pagina no detiene FFmpeg ni pierde el vinculo. Un job fallido o cancelado debe reintentarse explicitamente y nunca se elimina automaticamente.
+
+Consulta el diagnostico y rollback en `docs/EPISODE_VIDEO_LINKING_FIX_PLAN.md`. La migracion `20260804050000_link_episode_to_video_job` permite `Episode.videoUrl` nulo solo para representar borradores o procesamiento pendiente.
 
 ## Auditoria
 

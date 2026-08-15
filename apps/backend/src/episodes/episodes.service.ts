@@ -1,11 +1,15 @@
 import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
-import { MediaStatus, Prisma, VideoSource } from '@prisma/client';
+import { MediaStatus, Prisma, VideoProcessingStatus, VideoProcessingTargetType, VideoSource, VideoType } from '@prisma/client';
 import { NormalizedVideo, normalizeVideo } from '../common/video';
 import { validatePlaybackMarkers } from '../common/playback-markers';
 import { PrismaService } from '../prisma/prisma.service';
+import { ObjectStorageService } from '../storage/object-storage.service';
 import { BulkCreateEpisodesDto, CopyEpisodeSettingsDto, CreateEpisodeDto, PublishEpisodesDto, QueryAdminEpisodesDto, ReorderEpisodesDto, UpdateEpisodeDto } from './dto';
 import { toCatalogResponse } from '../common/catalog-response';
 import { publishedEpisodeWhere, publishedSeriesWhere } from '../common/content-visibility';
+
+type LinkableVideoJob = Prisma.VideoProcessingJobGetPayload<{ include: { inputMediaFile: true } }>;
+type EpisodeJobSummary = Prisma.VideoProcessingJobGetPayload<{ include: { inputMediaFile: { select: { originalName: true } } } }>;
 
 export function findMissingEpisodeNumbers(numbers: number[]) {
   const valid = [...new Set(numbers.filter((number) => Number.isInteger(number) && number > 0))].sort((left, right) => left - right);
@@ -18,7 +22,7 @@ export function findMissingEpisodeNumbers(numbers: number[]) {
 export class EpisodesService {
   private readonly logger = new Logger(EpisodesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly storage: ObjectStorageService) {}
 
   latest() {
     return this.prisma.episode.findMany({
@@ -30,12 +34,44 @@ export class EpisodesService {
   }
 
   async adminList(query: QueryAdminEpisodesDto) {
-    const where: Prisma.EpisodeWhereInput = { deletedAt: null, seriesId: query.seriesId, seasonId: query.seasonId, published: query.published };
+    const numericSearch = query.search && /^\d+$/.test(query.search) ? Number(query.search) : null;
+    const where: Prisma.EpisodeWhereInput = {
+      deletedAt: null,
+      seriesId: query.seriesId,
+      seasonId: query.seasonId,
+      published: query.published,
+      videoUrl: query.videoState === 'READY' ? { not: null } : query.videoState === 'MISSING' ? null : undefined,
+      OR: query.search ? [
+        { title: { contains: query.search, mode: 'insensitive' } },
+        ...(numericSearch ? [{ number: numericSearch }] : []),
+      ] : undefined,
+    };
     const [items, total] = await Promise.all([
       this.prisma.episode.findMany({ where, include: { season: true, series: true, subtitles: true }, orderBy: [{ season: { number: 'asc' } }, { position: 'asc' }, { number: 'asc' }], skip: (query.page - 1) * query.limit, take: query.limit }),
       this.prisma.episode.count({ where }),
     ]);
-    return { items, total, page: query.page, limit: query.limit };
+    const jobs = items.length ? await this.prisma.videoProcessingJob.findMany({
+      where: { targetType: VideoProcessingTargetType.EPISODE, targetId: { in: items.map((item) => item.id) } },
+      include: { inputMediaFile: { select: { originalName: true } } },
+      orderBy: { createdAt: 'desc' },
+    }) : [];
+    const jobsByEpisode = new Map<string | null, ReturnType<EpisodesService['presentEpisodeJob']>>();
+    for (const job of jobs) if (!jobsByEpisode.has(job.targetId)) jobsByEpisode.set(job.targetId, this.presentEpisodeJob(job));
+    return { items: items.map((item) => ({ ...item, processingJob: jobsByEpisode.get(item.id) ?? null })), total, page: query.page, limit: query.limit };
+  }
+
+  async adminById(id: string) {
+    const episode = await this.prisma.episode.findFirst({
+      where: { id, deletedAt: null },
+      include: { season: true, series: true, subtitles: true },
+    });
+    if (!episode) throw new NotFoundException('Episodio no encontrado');
+    const job = await this.prisma.videoProcessingJob.findFirst({
+      where: { targetType: VideoProcessingTargetType.EPISODE, targetId: id },
+      include: { inputMediaFile: { select: { originalName: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return { ...episode, processingJob: job ? this.presentEpisodeJob(job) : null };
   }
 
   async bySeriesSlug(slug: string) {
@@ -61,53 +97,66 @@ export class EpisodesService {
     return toCatalogResponse(episode);
   }
 
-  async create(dto: CreateEpisodeDto) {
+  async create(dto: CreateEpisodeDto, userId: string) {
     const seriesId = dto.seriesId.trim();
     const episodeNumber = Number(dto.episodeNumber);
     if (!seriesId) throw new BadRequestException('Selecciona una serie');
     if (!Number.isInteger(episodeNumber) || episodeNumber < 1) throw new BadRequestException('El numero de episodio debe ser un entero mayor que cero');
-    if (!dto.videoUrl?.trim()) throw new BadRequestException('La URL del video es obligatoria');
+    if (dto.processingJobId && dto.videoUrl?.trim()) throw new BadRequestException('Selecciona un trabajo de video o una URL, no ambos');
+    if (dto.published && !dto.processingJobId && !dto.videoUrl?.trim()) throw new BadRequestException('No se puede publicar un episodio sin video');
     validatePlaybackMarkers(dto, dto.durationSec);
 
-    const series = await this.prisma.series.findFirst({ where: { id: seriesId, deletedAt: null }, select: { id: true } });
-    if (!series) throw new BadRequestException('La serie seleccionada no existe');
-    const season = await this.prisma.season.findFirst({ where: dto.seasonId ? { id: dto.seasonId, seriesId, deletedAt: null } : { seriesId, number: 1, deletedAt: null } });
-    if (!season) throw new BadRequestException('Selecciona una temporada valida para la serie');
-
     try {
-      const video = normalizeVideo(dto);
-      await this.assertLocalReady(video);
-      const positionAggregate = await this.prisma.episode.aggregate({
-        where: { seasonId: season.id, deletedAt: null },
-        _max: { position: true },
-      });
-      const position = dto.position ?? (positionAggregate._max.position ?? 0) + 1;
-      return await this.prisma.episode.create({
-        data: { seriesId, seasonId: season.id, number: episodeNumber, position, title: dto.title.trim(), description: dto.description?.trim() || '', videoSource: video.videoSource, videoType: video.videoType, videoUrl: video.videoUrl.trim(), originalVideoUrl: video.originalVideoUrl?.trim() || null, processedVideoUrl: video.processedVideoUrl?.trim() || null, thumbnailUrl: dto.thumbnailUrl?.trim() || null, durationSec: dto.durationSec, introStartSec: dto.introStartSec, introEndSec: dto.introEndSec, recapStartSec: dto.recapStartSec, recapEndSec: dto.recapEndSec, published: dto.published ?? true, publishedAt: dto.publishedAt ? new Date(dto.publishedAt) : new Date() },
-        include: { season: true, series: true, subtitles: true },
-      });
+      const directVideo = dto.videoUrl ? normalizeVideo({ ...dto, videoUrl: dto.videoUrl, videoSource: dto.videoSource ?? 'URL', videoType: dto.videoType ?? 'MP4' }) : null;
+      if (directVideo) await this.assertLocalReady(directVideo);
+      return await this.prisma.$transaction(async (tx) => {
+        const series = await tx.series.findFirst({ where: { id: seriesId, deletedAt: null }, select: { id: true } });
+        if (!series) throw new BadRequestException('La serie seleccionada no existe');
+        const season = await tx.season.findFirst({ where: dto.seasonId ? { id: dto.seasonId, seriesId, deletedAt: null } : { seriesId, number: 1, deletedAt: null } });
+        if (!season) throw new BadRequestException('Selecciona una temporada valida para la serie');
+        await this.releaseArchivedNumber(tx, season.id, episodeNumber);
+        const job = dto.processingJobId ? await this.linkableJob(tx, dto.processingJobId, userId) : null;
+        const jobVideo = job ? this.videoFromJob(job) : null;
+        const positionAggregate = await tx.episode.aggregate({ where: { seasonId: season.id, deletedAt: null }, _max: { position: true } });
+        const position = dto.position ?? (positionAggregate._max.position ?? 0) + 1;
+        const episode = await tx.episode.create({
+          data: { seriesId, seasonId: season.id, number: episodeNumber, position, title: dto.title.trim(), description: dto.description?.trim() || '', videoSource: jobVideo?.videoSource ?? directVideo?.videoSource ?? VideoSource.URL, videoType: jobVideo?.videoType ?? directVideo?.videoType ?? VideoType.MP4, videoUrl: jobVideo?.videoUrl ?? directVideo?.videoUrl ?? null, originalVideoUrl: jobVideo?.originalVideoUrl ?? directVideo?.originalVideoUrl ?? null, processedVideoUrl: jobVideo?.processedVideoUrl ?? directVideo?.processedVideoUrl ?? null, thumbnailUrl: jobVideo?.thumbnailUrl ?? (dto.thumbnailUrl?.trim() || null), durationSec: jobVideo?.durationSec ?? dto.durationSec, introStartSec: dto.introStartSec, introEndSec: dto.introEndSec, recapStartSec: dto.recapStartSec, recapEndSec: dto.recapEndSec, published: Boolean(dto.published && (directVideo || job?.status === VideoProcessingStatus.COMPLETED)), publishedAt: dto.publishedAt ? new Date(dto.publishedAt) : new Date() },
+        });
+        if (job) await this.reserveJob(tx, job, episode.id);
+        return tx.episode.findUniqueOrThrow({ where: { id: episode.id }, include: { season: true, series: true, subtitles: true } });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     } catch (error) {
       this.handlePrismaError(error, 'crear');
     }
   }
 
-  async update(id: string, dto: UpdateEpisodeDto) {
+  async update(id: string, dto: UpdateEpisodeDto, userId: string) {
+    if (dto.processingJobId && dto.videoUrl?.trim()) throw new BadRequestException('Selecciona un trabajo de video o una URL, no ambos');
     const current = await this.prisma.episode.findFirst({ where: { id, deletedAt: null } });
     if (!current) throw new NotFoundException('Episodio no encontrado');
-    const seriesId = dto.seriesId?.trim() ?? current.seriesId;
     const seasonId = dto.seasonId ?? current.seasonId;
-    const season = await this.prisma.season.findFirst({ where: { id: seasonId, seriesId, deletedAt: null } });
-    if (!season) throw new BadRequestException('La temporada no pertenece a la serie seleccionada');
+    const season = await this.prisma.season.findFirst({ where: { id: seasonId, deletedAt: null }, select: { id: true, seriesId: true } });
+    if (!season) throw new BadRequestException('La temporada seleccionada no existe');
+    const seriesId = season.seriesId;
     const markers = { introStartSec: dto.introStartSec !== undefined ? dto.introStartSec : current.introStartSec, introEndSec: dto.introEndSec !== undefined ? dto.introEndSec : current.introEndSec, recapStartSec: dto.recapStartSec !== undefined ? dto.recapStartSec : current.recapStartSec, recapEndSec: dto.recapEndSec !== undefined ? dto.recapEndSec : current.recapEndSec };
     validatePlaybackMarkers(markers, dto.durationSec ?? current.durationSec);
-    const video = normalizeVideo({ videoUrl: dto.videoUrl ?? current.videoUrl, videoSource: dto.videoSource ?? current.videoSource, videoType: dto.videoType ?? current.videoType, originalVideoUrl: dto.originalVideoUrl ?? current.originalVideoUrl ?? undefined, processedVideoUrl: dto.processedVideoUrl ?? current.processedVideoUrl ?? undefined });
-    await this.assertLocalReady(video);
+    const videoWasSubmitted = dto.videoUrl !== undefined;
+    const submittedVideoUrl = videoWasSubmitted ? dto.videoUrl?.trim() || null : null;
+    const video = submittedVideoUrl ? normalizeVideo({ videoUrl: submittedVideoUrl, videoSource: dto.videoSource ?? current.videoSource, videoType: dto.videoType ?? current.videoType, originalVideoUrl: dto.originalVideoUrl ?? current.originalVideoUrl ?? undefined, processedVideoUrl: dto.processedVideoUrl ?? current.processedVideoUrl ?? undefined }) : null;
+    if (video) await this.assertLocalReady(video);
     try {
-      return await this.prisma.episode.update({
-        where: { id },
-        data: { seriesId, seasonId, number: dto.episodeNumber, position: dto.position, title: dto.title?.trim(), description: dto.description?.trim(), videoUrl: video.videoUrl, originalVideoUrl: video.originalVideoUrl, processedVideoUrl: video.processedVideoUrl, thumbnailUrl: dto.thumbnailUrl?.trim(), durationSec: dto.durationSec, introStartSec: dto.introStartSec, introEndSec: dto.introEndSec, recapStartSec: dto.recapStartSec, recapEndSec: dto.recapEndSec, published: dto.published, videoSource: video.videoSource, videoType: video.videoType, publishedAt: dto.publishedAt ? new Date(dto.publishedAt) : undefined },
-        include: { season: true, series: true, subtitles: true },
-      });
+      return await this.prisma.$transaction(async (tx) => {
+        if (dto.episodeNumber !== undefined) await this.releaseArchivedNumber(tx, seasonId, dto.episodeNumber);
+        const job = dto.processingJobId ? await this.linkableJob(tx, dto.processingJobId, userId, id) : null;
+        const jobVideo = job ? this.videoFromJob(job) : null;
+        const nextHasReadyVideo = Boolean(jobVideo?.videoUrl ?? video?.videoUrl ?? (!videoWasSubmitted ? current.videoUrl : null));
+        const episode = await tx.episode.update({
+          where: { id },
+          data: { seriesId, seasonId, number: dto.episodeNumber, position: dto.position, title: dto.title?.trim(), description: dto.description?.trim(), videoUrl: jobVideo?.videoUrl ?? video?.videoUrl ?? (videoWasSubmitted ? null : current.videoUrl), originalVideoUrl: jobVideo?.originalVideoUrl ?? video?.originalVideoUrl ?? (videoWasSubmitted ? null : current.originalVideoUrl), processedVideoUrl: jobVideo?.processedVideoUrl ?? video?.processedVideoUrl ?? (videoWasSubmitted ? null : current.processedVideoUrl), thumbnailUrl: jobVideo?.thumbnailUrl ?? dto.thumbnailUrl?.trim(), durationSec: dto.durationSec ?? jobVideo?.durationSec, introStartSec: dto.introStartSec, introEndSec: dto.introEndSec, recapStartSec: dto.recapStartSec, recapEndSec: dto.recapEndSec, published: dto.published === undefined ? undefined : Boolean(dto.published && nextHasReadyVideo), videoSource: jobVideo?.videoSource ?? video?.videoSource ?? current.videoSource, videoType: jobVideo?.videoType ?? video?.videoType ?? current.videoType, publishedAt: dto.publishedAt ? new Date(dto.publishedAt) : undefined },
+        });
+        if (job) await this.reserveJob(tx, job, episode.id);
+        return tx.episode.findUniqueOrThrow({ where: { id }, include: { season: true, series: true, subtitles: true } });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     } catch (error) {
       this.handlePrismaError(error, 'actualizar');
     }
@@ -129,6 +178,7 @@ export class EpisodesService {
         const created = [];
         for (const { item, video } of normalized) {
           const number = item.episodeNumber ?? ++nextNumber;
+          await this.releaseArchivedNumber(transaction, dto.seasonId, number);
           nextNumber = Math.max(nextNumber, number);
           nextPosition += 1;
           created.push(await transaction.episode.create({
@@ -153,6 +203,10 @@ export class EpisodesService {
 
   async publish(dto: PublishEpisodesDto) {
     const ids = [...new Set(dto.ids)];
+    if (dto.published) {
+      const withoutVideo = await this.prisma.episode.count({ where: { id: { in: ids }, deletedAt: null, videoUrl: null } });
+      if (withoutVideo) throw new ConflictException('No se puede publicar un episodio cuyo video aun no esta listo');
+    }
     const result = await this.prisma.episode.updateMany({ where: { id: { in: ids }, deletedAt: null }, data: { published: dto.published } });
     if (result.count !== ids.length) throw new BadRequestException('Uno o mas episodios no existen');
     return { updated: result.count, published: dto.published };
@@ -179,8 +233,88 @@ export class EpisodesService {
     return findMissingEpisodeNumbers(episodes.map((episode) => episode.number));
   }
 
-  remove(id: string) {
-    return this.prisma.episode.update({ where: { id }, data: { deletedAt: new Date(), published: false } });
+  async remove(id: string) {
+    const current = await this.prisma.episode.findFirst({ where: { id, deletedAt: null }, select: { id: true, seasonId: true } });
+    if (!current) throw new NotFoundException('Episodio no encontrado');
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const archivedNumber = await this.nextArchivedNumber(tx, current.seasonId);
+        const episode = await tx.episode.update({
+          where: { id },
+          data: { number: archivedNumber, deletedAt: new Date(), published: false },
+        });
+        await tx.videoProcessingJob.updateMany({
+          where: { targetType: VideoProcessingTargetType.EPISODE, targetId: id },
+          data: { targetType: null, targetId: null, associatedAt: null },
+        });
+        return episode;
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (error) {
+      this.handlePrismaError(error, 'eliminar');
+    }
+  }
+
+  private async releaseArchivedNumber(tx: Prisma.TransactionClient, seasonId: string, number: number) {
+    const archived = await tx.episode.findFirst({ where: { seasonId, number, deletedAt: { not: null } }, select: { id: true } });
+    if (!archived) return;
+    const archivedNumber = await this.nextArchivedNumber(tx, seasonId);
+    await tx.episode.update({ where: { id: archived.id }, data: { number: archivedNumber } });
+    await tx.videoProcessingJob.updateMany({
+      where: { targetType: VideoProcessingTargetType.EPISODE, targetId: archived.id },
+      data: { targetType: null, targetId: null, associatedAt: null },
+    });
+  }
+
+  private async nextArchivedNumber(tx: Prisma.TransactionClient, seasonId: string) {
+    const aggregate = await tx.episode.aggregate({ where: { seasonId }, _min: { number: true } });
+    return Math.min((aggregate._min.number ?? 0) - 1, -1);
+  }
+
+  private async linkableJob(tx: Prisma.TransactionClient, id: string, userId: string, episodeId?: string) {
+    const job = await tx.videoProcessingJob.findUnique({ where: { id }, include: { inputMediaFile: true } });
+    if (!job) throw new NotFoundException('El archivo o trabajo de video seleccionado no existe');
+    if (job.requestedById !== userId) throw new ConflictException('No puedes relacionar un archivo cargado por otro usuario');
+    const allowedStatuses = new Set<VideoProcessingStatus>([VideoProcessingStatus.QUEUED, VideoProcessingStatus.PROCESSING, VideoProcessingStatus.COMPLETED]);
+    if (!allowedStatuses.has(job.status)) {
+      throw new ConflictException(job.status === VideoProcessingStatus.CANCELLED ? 'El procesamiento del video fue cancelado' : 'El procesamiento del video fallo. Reintentalo antes de relacionarlo');
+    }
+    if (job.targetType && job.targetType !== VideoProcessingTargetType.EPISODE) throw new ConflictException('El archivo seleccionado ya esta asociado a otro contenido');
+    if (job.targetId && job.targetId !== episodeId) throw new ConflictException('El archivo seleccionado ya esta asociado a otro episodio');
+    if (job.status === VideoProcessingStatus.COMPLETED && !job.masterPath) throw new ConflictException('El procesamiento termino sin una salida HLS valida');
+    return job;
+  }
+
+  private videoFromJob(job: LinkableVideoJob) {
+    const originalVideoUrl = this.storage.publicUrl(job.inputMediaFile.relativePath);
+    if (job.status !== VideoProcessingStatus.COMPLETED || !job.masterPath) {
+      return { videoUrl: null, originalVideoUrl, processedVideoUrl: null, thumbnailUrl: null, durationSec: job.durationSec ? Math.round(job.durationSec) : undefined, videoSource: VideoSource.LOCAL, videoType: VideoType.MP4 };
+    }
+    const videoUrl = this.storage.publicUrl(job.masterPath);
+    return { videoUrl, originalVideoUrl, processedVideoUrl: videoUrl, thumbnailUrl: job.thumbnailPath ? this.storage.publicUrl(job.thumbnailPath) : null, durationSec: job.durationSec ? Math.round(job.durationSec) : undefined, videoSource: VideoSource.HLS, videoType: VideoType.HLS };
+  }
+
+  private async reserveJob(tx: Prisma.TransactionClient, job: LinkableVideoJob, episodeId: string) {
+    const reserved = await tx.videoProcessingJob.updateMany({
+      where: { id: job.id, requestedById: job.requestedById, status: { in: [VideoProcessingStatus.QUEUED, VideoProcessingStatus.PROCESSING, VideoProcessingStatus.COMPLETED] }, OR: [{ targetType: null, targetId: null }, { targetType: VideoProcessingTargetType.EPISODE, targetId: episodeId }] },
+      data: { targetType: VideoProcessingTargetType.EPISODE, targetId: episodeId, associatedAt: job.status === VideoProcessingStatus.COMPLETED ? new Date() : null, processingStage: job.status === VideoProcessingStatus.COMPLETED ? 'COMPLETED' : job.processingStage },
+    });
+    if (reserved.count !== 1) throw new ConflictException('No se pudo relacionar el video porque otro episodio ya lo utilizo');
+    if (job.status === VideoProcessingStatus.COMPLETED) await this.createJobSubtitles(tx, job, episodeId);
+  }
+
+  private async createJobSubtitles(tx: Prisma.TransactionClient, job: LinkableVideoJob, episodeId: string) {
+    if (!Array.isArray(job.subtitleTracks)) return;
+    for (const [index, value] of job.subtitleTracks.entries()) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      const track = value as Record<string, Prisma.JsonValue>;
+      if (![track.url, track.language, track.label, track.originalName].every((field) => typeof field === 'string')) continue;
+      const exists = await tx.subtitleTrack.count({ where: { episodeId, language: track.language as string, url: track.url as string } });
+      if (!exists) await tx.subtitleTrack.create({ data: { episodeId, language: track.language as string, label: track.label as string, url: track.url as string, originalName: track.originalName as string, sourceFormat: 'VTT', isDefault: index === 0, isActive: true } });
+    }
+  }
+
+  private presentEpisodeJob(job: EpisodeJobSummary) {
+    return { id: job.id, status: job.status, progress: job.progress, stage: job.processingStage, originalName: job.inputMediaFile.originalName, targetType: job.targetType, targetId: job.targetId, masterUrl: job.masterPath ? this.storage.publicUrl(job.masterPath) : null, thumbnailUrl: job.thumbnailPath ? this.storage.publicUrl(job.thumbnailPath) : null, errorMessage: job.errorMessage, createdAt: job.createdAt, updatedAt: job.updatedAt };
   }
 
   private async assertLocalReady(video: NormalizedVideo) {

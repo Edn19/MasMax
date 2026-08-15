@@ -6,6 +6,7 @@ import { Season, Series } from '../../types/models';
 import { Checkbox, FormActions, FormField, FormHint, FormLabel, FormSection, NumberInput, Select, TextArea, TextInput } from '../components/AdminForms';
 import { AdminTable, Button, FormDisclosure, Panel, ResourceError } from '../components/AdminUi';
 import { UploadField } from '../components/UploadField';
+import { buildCreateSeasonPayload, buildUpdateSeasonPayload, createSeasonPath, seasonSaveErrorMessage, updateSeasonPath } from './season-payload';
 
 const emptyForm = { number: '', title: '', description: '', posterUrl: '', published: false };
 
@@ -19,7 +20,9 @@ export function SeasonsAdminPage() {
   useEffect(() => { if (!seriesId && series.data?.[0]) setSeriesId(series.data[0].id); }, [series.data, seriesId]);
   function reset() { setEditingId(null); setForm(emptyForm); setFormOpen(false); }
   function edit(season: Season) { setEditingId(season.id); setFormOpen(true); setForm({ number: String(season.number), title: season.title, description: season.description, posterUrl: season.posterUrl ?? '', published: season.published }); }
-  async function submit(event: FormEvent) { event.preventDefault(); if (!seriesId) return toast.error('Selecciona una serie'); const payload = { seriesId, number: form.number ? Number(form.number) : undefined, title: form.title || undefined, description: form.description, posterUrl: form.posterUrl || undefined, published: form.published }; try { const saved = editingId ? await patchJson<Season>(`/admin/seasons/${editingId}`, payload) : await postJson<Season>('/admin/seasons', payload); seasons.setData(editingId ? (seasons.data ?? []).map((item) => item.id === saved.id ? saved : item) : [...(seasons.data ?? []), saved].sort((a, b) => a.number - b.number)); toast.success(editingId ? 'Temporada actualizada' : 'Temporada creada'); reset(); } catch (error) { toast.error((error as Error).message); } }
+  async function submit(event: FormEvent) { event.preventDefault(); if (!seriesId) return toast.error('Selecciona una serie'); try { const saved = editingId
+      ? await patchJson<Season>(updateSeasonPath(editingId), buildUpdateSeasonPayload(form))
+      : await postJson<Season>(createSeasonPath, buildCreateSeasonPayload(seriesId, form)); seasons.setData(editingId ? (seasons.data ?? []).map((item) => item.id === saved.id ? saved : item) : [...(seasons.data ?? []), saved].sort((a, b) => a.number - b.number)); toast.success(editingId ? 'Temporada actualizada' : 'Temporada creada'); reset(); } catch (error) { toast.error(seasonSaveErrorMessage(error)); } }
   const rows = (seasons.data ?? []).map((season) => ({ ...season, estado: season.published ? 'PUBLISHED' : 'DRAFT', episodios: season._count?.episodes ?? 0 }));
   return <Panel title="Temporadas" description="Organiza temporadas y su disponibilidad por serie." action={<button type="button" className="button-primary" disabled={!seriesId} onClick={() => { setEditingId(null); setForm(emptyForm); setFormOpen(true); }}>Crear temporada</button>}>
     <ResourceError message={series.error ?? seasons.error} />

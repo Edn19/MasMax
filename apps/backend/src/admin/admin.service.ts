@@ -113,6 +113,14 @@ export class AdminService {
       ...recentEpisodes.map((item) => ({ ...item, type: 'episode' as const })),
       ...recentMovies.map((item) => ({ ...item, type: 'movie' as const })),
     ]);
+    const [completedJobs, unassignedJobs, publishedEpisodes, draftEpisodes, publishedMovies, draftMovies] = await Promise.all([
+      this.prisma.videoProcessingJob.count({ where: { status: 'COMPLETED' } }),
+      this.prisma.videoProcessingJob.count({ where: { targetId: null } }),
+      this.prisma.episode.count({ where: { published: true, deletedAt: null } }),
+      this.prisma.episode.count({ where: { published: false, deletedAt: null } }),
+      this.prisma.movie.count({ where: { status: 'PUBLISHED', deletedAt: null } }),
+      this.prisma.movie.count({ where: { status: { not: 'PUBLISHED' }, deletedAt: null } }),
+    ]);
 
     return {
       series,
@@ -138,6 +146,7 @@ export class AdminService {
       },
       comments: { pending: pendingComments },
       files: { processing: processingFiles, failed: failedFiles, orphaned: storage.orphaned, recentErrors },
+      mediaSummary: { active: processingFiles, failed: failedFiles, completed: completedJobs, unassigned: unassignedJobs, published: publishedEpisodes + publishedMovies, drafts: draftEpisodes + draftMovies },
       storage,
       health: { backend: 'ok', database: 'ok', storage: 'ok' },
       generatedAt: now.toISOString(),

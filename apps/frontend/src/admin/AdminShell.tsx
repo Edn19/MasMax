@@ -1,4 +1,4 @@
-import { Activity, ArrowLeft, BarChart3, CalendarRange, Captions, ChevronDown, Clapperboard, Database, Film, Menu, MessageSquare, Palette, PanelLeftClose, PanelLeftOpen, ScrollText, Settings, Tags, Users, X } from 'lucide-react';
+import { Activity, ArrowLeft, BarChart3, CalendarRange, Captions, ChevronDown, Clapperboard, Database, Film, Library, Menu, MessageSquare, Palette, PanelLeftClose, PanelLeftOpen, ScrollText, Settings, Tags, Users, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
@@ -6,6 +6,7 @@ import { useSiteSettings } from '../lib/site-settings';
 import { isNavigationPathActive } from '../lib/ui';
 import { useVideoProcessingJobs } from '../lib/video-processing-jobs';
 import { processingStageLabel } from '../lib/video-processing-state';
+import { AdminErrorBoundary } from './components/AdminErrorBoundary';
 
 const groups = [
   { label: 'General', links: [{ to: '/admin', label: 'Dashboard', icon: BarChart3, end: true }] },
@@ -14,7 +15,7 @@ const groups = [
     { to: '/admin/episodes', label: 'Episodios', icon: Clapperboard }, { to: '/admin/movies', label: 'Peliculas', icon: Film },
     { to: '/admin/genres', label: 'Generos', icon: Tags }, { to: '/admin/subtitles', label: 'Subtitulos', icon: Captions },
   ] },
-  { label: 'Multimedia', links: [{ to: '/admin/processing', label: 'Procesamiento', icon: Activity }, { to: '/admin/storage', label: 'Almacenamiento', icon: Database }] },
+  { label: 'Multimedia', links: [{ to: '/admin/processing', label: 'Procesamiento', icon: Activity }, { to: '/admin/media', label: 'Biblioteca multimedia', icon: Library }, { to: '/admin/storage', label: 'Almacenamiento', icon: Database }] },
   { label: 'Administracion', links: [{ to: '/admin/users', label: 'Usuarios', icon: Users }, { to: '/admin/comments', label: 'Comentarios', icon: MessageSquare }, { to: '/admin/audit', label: 'Auditoria', icon: ScrollText }] },
   { label: 'Sistema', links: [{ to: '/admin/settings', label: 'Configuracion', icon: Settings, end: true }, { to: '/admin/settings/design', label: 'Diseno del sitio', icon: Palette }] },
 ];
@@ -66,7 +67,7 @@ export function AdminShell() {
       <main id="main-content" tabIndex={-1} className="min-w-0 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
         <nav aria-label="Migas de pan" className="mb-4 text-xs text-slate-500"><Link to="/admin" className="hover:text-brand">Administracion</Link><span aria-hidden="true"> / </span><span aria-current="page" className="text-slate-300">{active?.label ?? 'Panel'}</span></nav>
         {currentJob && <Link to="/admin/processing" className="mb-5 block rounded-xl border border-brand/30 bg-brand/5 p-3 transition hover:border-brand/60" aria-label={`Ver procesamiento de ${currentJob.input.originalName}`}><div className="flex items-center justify-between gap-4 text-sm"><div className="min-w-0"><p className="truncate font-semibold text-white">{currentJob.input.originalName}</p><p className="mt-0.5 text-xs text-slate-400">{processingStageLabel(currentJob.stage, currentJob.status)}</p></div><strong className="shrink-0 text-brand">{currentJob.progress}%</strong></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ink"><div className="h-full bg-brand transition-[width]" style={{ width: `${currentJob.progress}%` }} /></div></Link>}
-        <Outlet />
+        {location.pathname.startsWith('/admin/episodes') ? <AdminErrorBoundary resetKey={location.pathname}><Outlet /></AdminErrorBoundary> : <Outlet />}
       </main>
     </div>
     <Toaster richColors theme="dark" />

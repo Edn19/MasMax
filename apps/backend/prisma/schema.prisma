@@ -172,7 +172,7 @@ model Episode {
   position          Int               @default(0)
   title             String
   description       String
-  videoUrl          String
+  videoUrl          String?
   videoType         VideoType         @default(MP4)
   videoSource       VideoSource       @default(URL)
   originalVideoUrl  String?

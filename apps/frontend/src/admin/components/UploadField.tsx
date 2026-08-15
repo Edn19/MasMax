@@ -8,9 +8,18 @@ import { useVideoProcessingJobs } from '../../lib/video-processing-jobs';
 import { processingStageLabel, shouldPromptForResumableFile } from '../../lib/video-processing-state';
 import { formatBytes } from './admin-utils';
 
-type UploadedDetails = { originalUrl?: string; thumbnailUrl?: string };
+export type UploadedDetails = { originalUrl?: string; thumbnailUrl?: string; processingJobId?: string };
 
-export function UploadField({ type, label, onUploaded, target }: { type: 'video' | 'image'; label: string; onUploaded: (url: string, mimeType: string, details?: UploadedDetails) => void; target?: { type: 'EPISODE' | 'MOVIE'; id: string } }) {
+type UploadFieldProps = {
+  type: 'video' | 'image';
+  label: string;
+  onUploaded: (url: string, mimeType: string, details?: UploadedDetails) => void;
+  onProcessingJob?: (job: VideoProcessingJob) => void;
+  selectedProcessingJobId?: string | null;
+  target?: { type: 'EPISODE' | 'MOVIE'; id: string };
+};
+
+export function UploadField({ type, label, onUploaded, onProcessingJob, selectedProcessingJobId, target }: UploadFieldProps) {
   const maxVideoUploadMb = Number(import.meta.env.VITE_MAX_VIDEO_UPLOAD_MB ?? 2048);
   const [progress, setProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
@@ -32,17 +41,18 @@ export function UploadField({ type, label, onUploaded, target }: { type: 'video'
   const completedJobsRef = useRef(new Set<string>());
   const onUploadedRef = useRef(onUploaded);
   const processing = useVideoProcessingJobs();
-  const processingJob = type === 'video' ? (processingJobId ? processing.jobs.find((job) => job.id === processingJobId) : undefined) ?? processing.byTarget(target?.type, target?.id) ?? processing.activeJobs[0] : undefined;
+  const processingJob = type === 'video' ? (processingJobId ? processing.jobs.find((job) => job.id === processingJobId) : undefined) ?? processing.byTarget(target?.type, target?.id) : undefined;
   onUploadedRef.current = onUploaded;
 
   useEffect(() => { if (type === 'video') void listResumableUploads().then(setPending).catch(() => undefined); }, [type]);
+  useEffect(() => { if (type === 'video' && selectedProcessingJobId) setProcessingJobId(selectedProcessingJobId); }, [selectedProcessingJobId, type]);
   useEffect(() => {
     if (!processingJob) return;
     if (processingJob.status === 'COMPLETED' && processingJob.masterUrl) {
       if (completedJobsRef.current.has(processingJob.id)) return;
       completedJobsRef.current.add(processingJob.id);
       setProcessingJobId(null);
-      onUploadedRef.current(processingJob.masterUrl, 'application/vnd.apple.mpegurl', { originalUrl: uploadedResult?.url, thumbnailUrl: processingJob.thumbnailUrl ?? undefined });
+      onUploadedRef.current(processingJob.masterUrl, 'application/vnd.apple.mpegurl', { originalUrl: uploadedResult?.url, thumbnailUrl: processingJob.thumbnailUrl ?? undefined, processingJobId: processingJob.id });
       toast.success('Video HLS procesado y listo');
     }
   }, [processingJob, uploadedResult]);
@@ -78,7 +88,7 @@ export function UploadField({ type, label, onUploaded, target }: { type: 'video'
       setSession(outcome.session);
       if (outcome.result) {
         setPending((items) => items.filter((item) => item.id !== current.id)); setSession(null); setFile(null);
-        if (outcome.result.processingJob) { const configuredJob = await patchJson<VideoProcessingJob>(`/admin/video-processing/${outcome.result.processingJob.id}/settings`, { retainOriginal: keepOriginal, targetType: target?.type, targetId: target?.id }); setUploadedResult(outcome.result); setProcessingJobId(configuredJob.id); processing.track(configuredJob); toast.success('Video subido. Procesamiento HLS en cola'); }
+        if (outcome.result.processingJob) { const configuredJob = await patchJson<VideoProcessingJob>(`/admin/video-processing/${outcome.result.processingJob.id}/settings`, target ? { retainOriginal: keepOriginal, targetType: target.type, targetId: target.id } : { retainOriginal: keepOriginal }); setUploadedResult(outcome.result); setProcessingJobId(configuredJob.id); processing.track(configuredJob); onProcessingJob?.(configuredJob); toast.success('Video subido. Ya puedes guardar mientras se procesa'); }
         else { onUploaded(outcome.result.url, outcome.result.mimeType); setCompleted(true); toast.success('Video validado y subido'); }
       }
     } catch (error) {

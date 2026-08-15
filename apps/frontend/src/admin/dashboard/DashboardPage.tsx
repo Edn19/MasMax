@@ -1,5 +1,6 @@
 import { Activity, Clapperboard, Database, Eye, Film, HardDrive, MessageSquare, Server, Users } from 'lucide-react';
 import { ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { LoadingBlock } from '../../components/Layout';
 import { api } from '../../lib/api';
 import { useAsync } from '../../lib/useAsync';
@@ -47,6 +48,15 @@ export function DashboardPage() {
         <MetricCard label="Temporadas" value={data.totals.seasons ?? '—'} detail={data.totals.seasons === null ? 'Disponible tras la fase de temporadas' : undefined} icon={<Clapperboard size={18} />} />
         <MetricCard label="Episodios" value={data.totals.episodes} icon={<Clapperboard size={18} />} />
         <MetricCard label="Usuarios" value={data.totals.users} detail={`${data.usersSummary.activeRecently} activos en 30 dias`} icon={<Users size={18} />} />
+      </div>
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+        <Link to="/admin/processing"><MetricCard label="Procesando ahora" value={data.mediaSummary.active} icon={<Activity size={18} />} /></Link>
+        <Link to="/admin/media?status=FAILED"><MetricCard label="Fallidos" value={data.mediaSummary.failed} icon={<Activity size={18} />} /></Link>
+        <Link to="/admin/media?status=COMPLETED"><MetricCard label="HLS listos" value={data.mediaSummary.completed} icon={<HardDrive size={18} />} /></Link>
+        <Link to="/admin/media?contentType=UNASSIGNED"><MetricCard label="Sin asignar" value={data.mediaSummary.unassigned} icon={<Database size={18} />} /></Link>
+        <Link to="/admin/media?publication=PUBLISHED"><MetricCard label="Publicados" value={data.mediaSummary.published} icon={<Eye size={18} />} /></Link>
+        <Link to="/admin/media?publication=DRAFT"><MetricCard label="Borradores" value={data.mediaSummary.drafts} icon={<Clapperboard size={18} />} /></Link>
       </div>
 
       <div className="mt-5 grid gap-5 xl:grid-cols-[1.4fr,1fr]">
