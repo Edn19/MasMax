@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
-import { Prisma, VideoSource, VideoType } from '@prisma/client';
+import { EpisodePlaybackMode, Prisma, VideoSource, VideoType } from '@prisma/client';
 import { parse } from 'csv-parse/sync';
 import { normalizeVideo } from '../common/video';
 import { PrismaService } from '../prisma/prisma.service';
@@ -102,6 +102,7 @@ export class EpisodeImportService {
         videoUrl: video.videoUrl,
         originalVideoUrl: video.originalVideoUrl,
         processedVideoUrl: video.processedVideoUrl,
+        playbackMode: video.videoType === VideoType.HLS ? EpisodePlaybackMode.HLS : EpisodePlaybackMode.ORIGINAL,
         videoSource: video.videoSource,
         videoType: video.videoType,
         thumbnailUrl: record.thumbnailUrl?.trim() || null,

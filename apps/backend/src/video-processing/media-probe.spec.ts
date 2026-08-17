@@ -4,9 +4,9 @@ import { randomUUID } from 'crypto';
 import { rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { allowedVideoExtensions, allowedVideoMimeTypes, assertContainerSignature, canCopyPrimaryAudio, canCopyVideo, isAllowedVideoUploadIdentity, MediaProbeMetadata, validateUploadIdentity } from './media-probe';
+import { allowedVideoExtensions, allowedVideoMimeTypes, assertContainerSignature, canCopyPrimaryAudio, canCopyVideo, detectMp4FastStart, isAllowedVideoUploadIdentity, MediaProbeMetadata, validateUploadIdentity } from './media-probe';
 
-const metadata: MediaProbeMetadata = { container: 'matroska', formatName: 'matroska,webm', durationSec: 60, width: 1920, height: 1080, fps: 24, bitrate: 4_000_000, videoCodec: 'h264', videoProfile: 'high', pixelFormat: 'yuv420p', audioTracks: [{ index: 1, codec: 'aac', language: 'spa', title: 'Espanol', channels: 2 }], subtitleTracks: [], streamCount: 2 };
+const metadata: MediaProbeMetadata = { container: 'matroska', formatName: 'matroska,webm', durationSec: 60, width: 1920, height: 1080, fps: 24, bitrate: 4_000_000, videoCodec: 'h264', videoProfile: 'high', pixelFormat: 'yuv420p', audioTracks: [{ index: 1, codec: 'aac', language: 'spa', title: 'Espanol', channels: 2 }], subtitleTracks: [], streamCount: 2, fastStart: null };
 
 describe('media probe policy', () => {
   it('accepts MP4 and all supported Matroska browser MIME variants', () => {
@@ -16,7 +16,9 @@ describe('media probe policy', () => {
     }
     expect(validateUploadIdentity('episode.mp4', 'video/mp4').extension).toBe('.mp4');
     expect(validateUploadIdentity('episode.mp4', 'application/mp4').extension).toBe('.mp4');
-    expect(allowedVideoExtensions).toEqual(['.mp4', '.mkv']);
+    expect(allowedVideoExtensions).toEqual(['.mp4', '.mkv', '.mov', '.webm']);
+    expect(validateUploadIdentity('episode.mov', 'video/quicktime').extension).toBe('.mov');
+    expect(validateUploadIdentity('episode.webm', 'video/webm').extension).toBe('.webm');
     expect(allowedVideoMimeTypes).toContain('video/matroska');
   });
   it('rejects unsupported extensions and paths', () => {
@@ -47,7 +49,19 @@ describe('media probe policy', () => {
     try {
       await expect(assertContainerSignature(mp4, '.mp4')).resolves.toBeUndefined();
       await expect(assertContainerSignature(mkv, '.mkv')).resolves.toBeUndefined();
-      await expect(assertContainerSignature(fake, '.mkv')).rejects.toThrow('no contiene un video MP4 o MKV valido');
+      await expect(assertContainerSignature(fake, '.mkv')).rejects.toThrow('firma del contenedor');
     } finally { await Promise.all([mp4, mkv, fake].map((path) => rm(path, { force: true }))); }
+  });
+  it('detecta fast start sin cargar el MP4 completo en memoria', async () => {
+    const root = join(tmpdir(), `masmax-faststart-${randomUUID()}`);
+    const fast = `${root}-fast.mp4`;
+    const slow = `${root}-slow.mp4`;
+    const box = (type: string) => { const value = Buffer.alloc(8); value.writeUInt32BE(8, 0); value.write(type, 4, 4, 'ascii'); return value; };
+    await writeFile(fast, Buffer.concat([box('ftyp'), box('moov'), box('mdat')]));
+    await writeFile(slow, Buffer.concat([box('ftyp'), box('mdat'), box('moov')]));
+    try {
+      await expect(detectMp4FastStart(fast)).resolves.toBe(true);
+      await expect(detectMp4FastStart(slow)).resolves.toBe(false);
+    } finally { await Promise.all([fast, slow].map((path) => rm(path, { force: true }))); }
   });
 });

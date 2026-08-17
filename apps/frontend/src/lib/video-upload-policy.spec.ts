@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { acceptedVideoInput, validateVideoSelection } from './video-upload-policy';
 
-test('video input advertises MP4 and MKV', () => {
-  assert.equal(acceptedVideoInput, '.mp4,.mkv,video/mp4,application/mp4,video/matroska,video/x-matroska,application/x-matroska');
+test('video input advertises all admitted containers', () => {
+  assert.equal(acceptedVideoInput, '.mp4,.mkv,.mov,.webm,video/mp4,application/mp4,video/quicktime,video/matroska,video/x-matroska,application/x-matroska,video/webm');
 });
 
 test('video selection accepts Matroska browser MIME fallbacks', () => {

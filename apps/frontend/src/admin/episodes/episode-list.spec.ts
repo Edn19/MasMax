@@ -14,7 +14,9 @@ test('construye busqueda y filtros sin parametros vacios', () => {
 test('calcula paginas y describe estado de procesamiento', () => {
   assert.equal(episodePageCount(41, 20), 3);
   assert.equal(episodeProcessingLabel({ videoUrl: undefined, processingJob: null }), 'Sin video');
-  assert.equal(episodeProcessingLabel({ videoUrl: undefined, processingJob: { status: 'PROCESSING', progress: 37 } as never }), 'Procesando 37%');
+  assert.equal(episodeProcessingLabel({ videoUrl: undefined, mediaFileId: 'media-1', processingJob: null }), 'Sin proceso activo');
+  assert.equal(episodeProcessingLabel({ videoUrl: undefined, processingJob: { kind: 'HLS', status: 'PROCESSING', progress: 37 } as never }), 'HLS: procesando 37%');
+  assert.equal(episodeProcessingLabel({ videoUrl: '/uploads/video.mp4', processingJob: { kind: 'REMUX', status: 'COMPLETED', progress: 100 } as never }), 'Sin proceso activo');
 });
 
 test('incluye contexto completo en la confirmacion de borrado', () => {

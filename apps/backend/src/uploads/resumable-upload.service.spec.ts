@@ -18,6 +18,9 @@ describe('ResumableUploadService', () => {
   let service: ResumableUploadService;
   const findFirst = vi.fn(async () => current as ResumableUpload | null);
   const update = vi.fn(async ({ data }: { data: Partial<ResumableUpload> }) => ({ ...current, ...data }));
+  const updateMany = vi.fn(async () => ({ count: 1 }));
+  const validateVideo = vi.fn();
+  const enqueue = vi.fn();
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'masmax-resumable-'));
@@ -28,13 +31,16 @@ describe('ResumableUploadService', () => {
       expiresAt: new Date(Date.now() + 60_000), createdAt: new Date(), updatedAt: new Date(),
     };
     update.mockClear();
+    updateMany.mockClear();
+    validateVideo.mockReset();
+    enqueue.mockReset();
     findFirst.mockClear();
-    const prisma = { resumableUpload: { findFirst, findMany: vi.fn(async () => []), update, create: vi.fn() } } as unknown as PrismaService;
+    const prisma = { resumableUpload: { findFirst, findMany: vi.fn(async () => []), update, updateMany, create: vi.fn() } } as unknown as PrismaService;
     service = new ResumableUploadService(
       prisma,
       new ConfigService({ UPLOAD_DIR: root }),
-      {} as MediaValidationService,
-      {} as VideoProcessingService,
+      { validateVideo } as unknown as MediaValidationService,
+      { enqueue } as unknown as VideoProcessingService,
     );
   });
 
@@ -89,5 +95,32 @@ describe('ResumableUploadService', () => {
     incoming = join(root, 'different.chunk'); await writeFile(incoming, 'B');
     const sha256B = 'df7e70e5021544f4834bbee64a9e3789febc4be81470df629cad6ddb03320a5c';
     await expect(service.uploadPart('admin1', current.id, multerFile(incoming, 1), { index: 0, checksum: sha256B })).rejects.toThrow('ya existe');
+  });
+
+  it('stores an original without enqueueing FFmpeg when ORIGINAL is selected', async () => {
+    const sessionDir = join(root, 'tmp', 'resumable', current.id);
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(join(sessionDir, '0.part'), 'A');
+    current = { ...current, uploadedParts: [0] };
+    validateVideo.mockResolvedValue({ mediaId: 'media1', url: '/uploads/videos/sample.mp4', mimeType: 'video/mp4' });
+
+    const result = await service.complete('admin1', current.id, { processingMode: 'ORIGINAL' });
+
+    expect(result).toMatchObject({ mediaId: 'media1', processingMode: 'ORIGINAL', processingJob: null });
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('uses the existing queue service when TRANSCODE is selected', async () => {
+    const sessionDir = join(root, 'tmp', 'resumable', current.id);
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(join(sessionDir, '0.part'), 'A');
+    current = { ...current, uploadedParts: [0] };
+    validateVideo.mockResolvedValue({ mediaId: 'media1', url: '/uploads/videos/sample.mp4', mimeType: 'video/mp4' });
+    enqueue.mockResolvedValue({ id: 'job1', status: 'QUEUED' });
+
+    const result = await service.complete('admin1', current.id, { processingMode: 'TRANSCODE' });
+
+    expect(enqueue).toHaveBeenCalledWith('admin1', 'media1', { retainOriginal: true });
+    expect(result).toMatchObject({ processingMode: 'TRANSCODE', processingJob: { id: 'job1' } });
   });
 });

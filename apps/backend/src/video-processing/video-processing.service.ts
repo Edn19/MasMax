@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { MediaStatus, MediaType, Prisma, VideoProcessingTargetType } from '@prisma/client';
+import { MediaStatus, MediaType, Prisma, VideoProcessingKind, VideoProcessingTargetType } from '@prisma/client';
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { PrismaService } from '../prisma/prisma.service';
@@ -24,26 +24,44 @@ export class VideoProcessingService implements OnModuleDestroy {
   isEnabled() { return String(this.config.get<string>('ENABLE_HLS') ?? 'true').toLowerCase() === 'true'; }
 
   async enqueue(requestedById: string, mediaFileId: string, options: EnqueueVideoProcessingDto = {}) {
+    return this.enqueueKind(requestedById, mediaFileId, VideoProcessingKind.HLS, options);
+  }
+
+  async enqueueRemux(requestedById: string, mediaFileId: string, options: EnqueueVideoProcessingDto = {}) {
+    return this.enqueueKind(requestedById, mediaFileId, VideoProcessingKind.REMUX, options);
+  }
+
+  private async enqueueKind(requestedById: string, mediaFileId: string, kind: VideoProcessingKind, options: EnqueueVideoProcessingDto) {
     const media = await this.prisma.mediaFile.findFirst({ where: { id: mediaFileId, mediaType: MediaType.VIDEO } });
     if (!media) throw new NotFoundException('Video de entrada no encontrado');
-    if (!['.mp4', '.mkv'].includes(media.extension.toLowerCase())) throw new ConflictException('Solo se pueden procesar archivos MP4 o MKV');
-    if (!this.isEnabled()) {
+    if (!['.mp4', '.mkv', '.mov', '.webm'].includes(media.extension.toLowerCase())) throw new ConflictException('Solo se pueden procesar archivos MP4, MKV, MOV o WebM');
+    if (kind === VideoProcessingKind.HLS && !this.isEnabled()) {
       if (media.extension.toLowerCase() === '.mkv') throw new ConflictException('La conversion HLS debe estar habilitada para aceptar archivos MKV');
       return null;
     }
     if (options.targetType || options.targetId) await this.assertTarget(options.targetType, options.targetId);
-    const active = await this.prisma.videoProcessingJob.findFirst({ where: { inputMediaFileId: media.id, status: { in: ['QUEUED', 'PROCESSING'] } }, include: this.mediaInclude() });
-    if (active) {
-      if (active.requestedById !== requestedById) throw new ConflictException('El archivo ya pertenece a otro trabajo de procesamiento');
-      return this.present(active);
-    }
     const retainOriginal = options.retainOriginal ?? String(this.config.get<string>('VIDEO_KEEP_ORIGINAL_DEFAULT') ?? this.config.get<string>('KEEP_ORIGINAL_VIDEO') ?? 'true').toLowerCase() === 'true';
-    const job = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.videoProcessingJob.create({ data: { requestedById, inputMediaFileId: media.id, retainOriginal, attempts: 1, processingStage: 'QUEUED', targetType: options.targetType, targetId: options.targetId, sourceWidth: media.width, sourceHeight: media.height, durationSec: media.durationSec, sourceVideoCodec: media.videoCodec, sourceAudioCodecs: media.audioCodec ? [media.audioCodec] : [] } });
+    const reserved = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${media.id}:${kind}`}))`;
+      const active = await tx.videoProcessingJob.findFirst({ where: { inputMediaFileId: media.id, kind, status: { in: ['QUEUED', 'PROCESSING'] } }, include: this.mediaInclude(), orderBy: { createdAt: 'desc' } });
+      if (active) {
+        if (active.requestedById !== requestedById) throw new ConflictException('El archivo ya pertenece a otro trabajo de procesamiento');
+        return { created: false as const, job: active };
+      }
+      const completed = await tx.videoProcessingJob.findFirst({ where: { inputMediaFileId: media.id, kind, status: 'COMPLETED', outputMediaFileId: { not: null } }, include: this.mediaInclude(), orderBy: { completedAt: 'desc' } });
+      if (completed) return { created: false as const, job: completed };
+      const created = await tx.videoProcessingJob.create({ data: { requestedById, inputMediaFileId: media.id, kind, retainOriginal, attempts: 1, processingStage: 'QUEUED', targetType: options.targetType, targetId: options.targetId, sourceWidth: media.width, sourceHeight: media.height, durationSec: media.durationSec, sourceVideoCodec: media.videoCodec, sourceAudioCodecs: media.audioCodec ? [media.audioCodec] : [] } });
       await tx.mediaFile.update({ where: { id: media.id }, data: { status: MediaStatus.QUEUED, errorMessage: null } });
-      return created;
+      return { created: true as const, job: await tx.videoProcessingJob.findUniqueOrThrow({ where: { id: created.id }, include: this.mediaInclude() }) };
     });
-    return this.addToQueue(job.id, 1);
+    if (!reserved.created) {
+      if (reserved.job.status === 'COMPLETED') {
+        const outputPath = kind === VideoProcessingKind.HLS ? reserved.job.masterPath : reserved.job.outputMediaFile?.relativePath;
+        if (!outputPath || !await this.storage.exists(outputPath)) throw new ConflictException(`La version ${kind} registrada no existe en el almacenamiento; requiere reconciliacion antes de reintentar`);
+      }
+      return this.present(reserved.job);
+    }
+    return this.addToQueue(reserved.job.id, 1);
   }
 
   async list() {
@@ -62,7 +80,7 @@ export class VideoProcessingService implements OnModuleDestroy {
       include: this.mediaInclude(),
       orderBy: { createdAt: 'desc' },
     });
-    return jobs.filter((job) => job.status !== 'COMPLETED' || Boolean(job.masterPath)).map((job) => this.present(job));
+    return jobs.filter((job) => job.status !== 'COMPLETED' || Boolean(job.outputMediaFileId)).map((job) => this.present(job));
   }
 
   async byTarget(targetType: VideoProcessingTargetType, targetId: string) {
@@ -125,15 +143,18 @@ export class VideoProcessingService implements OnModuleDestroy {
 
   private async associateInternal(id: string, dto: AssociateVideoProcessingDto, requestedById?: string) {
     const current = requestedById ? await this.findOwned(id, requestedById) : await this.find(id);
-    if (current.status !== 'COMPLETED' || !current.masterPath) throw new ConflictException('El HLS debe estar completado antes de asociarlo');
+    if (current.status !== 'COMPLETED' || !current.outputMediaFile) throw new ConflictException('La version procesada debe estar completada antes de asociarla');
     await this.assertTarget(dto.targetType, dto.targetId);
     if ((current.targetType || current.targetId) && (current.targetType !== dto.targetType || current.targetId !== dto.targetId)) throw new ConflictException('El trabajo ya esta asociado a otro contenido');
-    const videoUrl = this.storage.publicUrl(current.masterPath);
+    const outputPath = current.kind === VideoProcessingKind.HLS ? current.masterPath : current.outputMediaFile.relativePath;
+    if (!outputPath) throw new ConflictException('La salida procesada no tiene una ruta valida');
+    const videoUrl = this.storage.publicUrl(outputPath);
     const thumbnailUrl = current.thumbnailPath ? this.storage.publicUrl(current.thumbnailPath) : undefined;
     const subtitles = this.extractedSubtitles(current.subtitleTracks);
     await this.prisma.$transaction(async (tx) => {
       if (dto.targetType === VideoProcessingTargetType.EPISODE) {
-        await tx.episode.update({ where: { id: dto.targetId }, data: { videoSource: 'HLS', videoType: 'HLS', videoUrl, processedVideoUrl: videoUrl, thumbnailUrl, durationSec: current.durationSec ? Math.round(current.durationSec) : undefined } });
+        const episode = await tx.episode.findUniqueOrThrow({ where: { id: dto.targetId }, select: { playbackMode: true } });
+        await tx.episode.update({ where: { id: dto.targetId }, data: { mediaFileId: current.inputMediaFileId, originalVideoUrl: this.storage.publicUrl(current.inputMediaFile.relativePath), ...(current.kind === VideoProcessingKind.HLS ? { processedVideoUrl: videoUrl } : { remuxedVideoUrl: videoUrl }), thumbnailUrl, durationSec: current.durationSec ? Math.round(current.durationSec) : undefined, ...(episode.playbackMode === current.kind ? { videoSource: current.kind === VideoProcessingKind.HLS ? 'HLS' : 'LOCAL', videoType: current.kind === VideoProcessingKind.HLS ? 'HLS' : 'MP4', videoUrl } : {}) } });
       } else {
         await tx.movie.update({ where: { id: dto.targetId }, data: { videoSource: 'HLS', videoType: 'HLS', videoUrl, processedVideoUrl: videoUrl, posterUrl: thumbnailUrl, duration: current.durationSec ? Math.max(1, Math.round(current.durationSec / 60)) : undefined } });
       }
@@ -186,7 +207,7 @@ export class VideoProcessingService implements OnModuleDestroy {
   }
 
   private mediaInclude() { return { inputMediaFile: { select: { id: true, originalName: true, relativePath: true, status: true, width: true, height: true, durationSec: true, extension: true, videoCodec: true, audioCodec: true } }, outputMediaFile: { select: { id: true, relativePath: true } } } as const; }
-  private present(job: JobWithMedia) { return { id: job.id, requestedById: job.requestedById, originalName: job.inputMediaFile.originalName, status: job.status, progress: job.progress, stage: job.processingStage, profiles: job.profiles, generatedQualities: job.generatedQualities, attempts: job.attempts, errorMessage: job.errorMessage, retainOriginal: job.retainOriginal, cancelRequested: job.cancelRequested, sourceFormat: job.sourceFormat, sourceVideoCodec: job.sourceVideoCodec, sourceAudioCodecs: job.sourceAudioCodecs, sourceWidth: job.sourceWidth, sourceHeight: job.sourceHeight, durationSec: job.durationSec, audioTracks: job.audioTracks, subtitleTracks: job.subtitleTracks, targetType: job.targetType, targetId: job.targetId, associatedAt: job.associatedAt, masterUrl: job.masterPath ? this.storage.publicUrl(job.masterPath) : null, outputUrl: job.masterPath ? this.storage.publicUrl(job.masterPath) : null, thumbnailUrl: job.thumbnailPath ? this.storage.publicUrl(job.thumbnailPath) : null, input: job.inputMediaFile, outputMediaId: job.outputMediaFileId, createdAt: job.createdAt, startedAt: job.startedAt, completedAt: job.completedAt, updatedAt: job.updatedAt }; }
+  private present(job: JobWithMedia) { const outputPath = job.kind === VideoProcessingKind.HLS ? job.masterPath : job.outputMediaFile?.relativePath; return { id: job.id, kind: job.kind, requestedById: job.requestedById, originalName: job.inputMediaFile.originalName, status: job.status, progress: job.progress, stage: job.processingStage, profiles: job.profiles, generatedQualities: job.generatedQualities, attempts: job.attempts, errorMessage: job.errorMessage, retainOriginal: job.retainOriginal, cancelRequested: job.cancelRequested, sourceFormat: job.sourceFormat, sourceVideoCodec: job.sourceVideoCodec, sourceAudioCodecs: job.sourceAudioCodecs, sourceWidth: job.sourceWidth, sourceHeight: job.sourceHeight, durationSec: job.durationSec, audioTracks: job.audioTracks, subtitleTracks: job.subtitleTracks, targetType: job.targetType, targetId: job.targetId, associatedAt: job.associatedAt, masterUrl: job.masterPath ? this.storage.publicUrl(job.masterPath) : null, outputUrl: outputPath ? this.storage.publicUrl(outputPath) : null, thumbnailUrl: job.thumbnailPath ? this.storage.publicUrl(job.thumbnailPath) : null, input: job.inputMediaFile, outputMediaId: job.outputMediaFileId, createdAt: job.createdAt, startedAt: job.startedAt, completedAt: job.completedAt, updatedAt: job.updatedAt }; }
 
   private async assertTarget(targetType?: VideoProcessingTargetType, targetId?: string) {
     if (!targetType || !targetId) throw new BadRequestException('Indica targetType y targetId');
@@ -209,6 +230,15 @@ export class VideoProcessingService implements OnModuleDestroy {
 
   private async removeOriginalAfterAssociation(job: JobWithMedia) {
     if (!job.associatedAt) return;
+    const originalUrl = this.storage.publicUrl(job.inputMediaFile.relativePath);
+    const [episodeReferences, movieReferences] = await Promise.all([
+      this.prisma.episode.count({ where: { deletedAt: null, OR: [{ mediaFileId: job.inputMediaFileId }, { originalVideoUrl: originalUrl }] } }),
+      this.prisma.movie.count({ where: { deletedAt: null, originalVideoUrl: originalUrl } }),
+    ]);
+    if (episodeReferences + movieReferences > 1) {
+      await this.prisma.videoProcessingJob.update({ where: { id: job.id }, data: { retainOriginal: true } });
+      return;
+    }
     await this.storage.delete(job.inputMediaFile.relativePath);
     await this.prisma.mediaFile.update({ where: { id: job.inputMediaFileId }, data: { status: MediaStatus.DELETED, errorMessage: null } });
   }

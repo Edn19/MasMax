@@ -23,6 +23,7 @@ export type ResumableUploadSession = {
 
 export type VideoProcessingJob = {
   id: string;
+  kind?: 'HLS' | 'REMUX';
   status: 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
   progress: number;
   stage: string;
@@ -31,6 +32,7 @@ export type VideoProcessingJob = {
   attempts: number;
   errorMessage?: string | null;
   masterUrl?: string | null;
+  outputUrl?: string | null;
   thumbnailUrl?: string | null;
   retainOriginal: boolean;
   sourceFormat?: string | null;
@@ -42,7 +44,8 @@ export type VideoProcessingJob = {
   targetId?: string | null;
   associatedAt?: string | null;
 };
-export type ResumableUploadResult = { url: string; mimeType: string; mediaId: string; processingJob?: VideoProcessingJob | null };
+export type VideoProcessingMode = 'ORIGINAL' | 'REMUX' | 'HLS' | 'TRANSCODE';
+export type ResumableUploadResult = { url: string; mimeType: string; mediaId: string; processingMode: VideoProcessingMode; metadata?: { videoCodec?: string; audioTracks?: Array<{ codec?: string }>; width?: number; height?: number; durationSec?: number; fastStart?: boolean | null }; processingJob?: VideoProcessingJob | null };
 export type UploadControl = { paused: boolean; cancelled: boolean; request?: XMLHttpRequest; abortController?: AbortController };
 export type UploadRetryState = { part: number; totalParts: number; attempt: number; maxAttempts: number };
 export type UploadMetrics = { progress: number; speedBytesPerSecond: number; etaSeconds: number | null; retry?: UploadRetryState };
@@ -52,7 +55,7 @@ export const getResumableUpload = (id: string) => api<ResumableUploadSession>(`/
 export const initiateResumableUpload = (file: File) => postJson<ResumableUploadSession>('/admin/uploads/resumable', { originalName: file.name, mimeType: file.type, size: file.size, lastModified: file.lastModified });
 export const cancelResumableUpload = (id: string) => deleteJson<{ cancelled: boolean }>(`/admin/uploads/resumable/${id}`);
 
-export async function uploadResumableVideo(file: File, initial: ResumableUploadSession, control: UploadControl, onMetrics: (metrics: UploadMetrics) => void) {
+export async function uploadResumableVideo(file: File, initial: ResumableUploadSession, control: UploadControl, onMetrics: (metrics: UploadMetrics) => void, processingMode: VideoProcessingMode = 'HLS') {
   let session = initial;
   if (!matchesResumableFile(session, file)) throw new ApiError('El archivo seleccionado no coincide con la sesion pendiente.', 409, 'UPLOAD_IDENTITY_MISMATCH');
   let confirmedBytes = session.uploadedBytes;
@@ -76,7 +79,7 @@ export async function uploadResumableVideo(file: File, initial: ResumableUploadS
   }
   if (control.paused || control.cancelled) return { session };
   onMetrics({ progress: 99.9, speedBytesPerSecond: 0, etaSeconds: null });
-  const result = await postJson<ResumableUploadResult>(`/admin/uploads/resumable/${session.id}/complete`, {});
+  const result = await postJson<ResumableUploadResult>(`/admin/uploads/resumable/${session.id}/complete`, { processingMode });
   onMetrics({ progress: 100, speedBytesPerSecond: 0, etaSeconds: 0 });
   return { session, result };
 }

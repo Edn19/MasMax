@@ -14,6 +14,7 @@ describe('MediaService', () => {
   it('genera y valida una URL temporal para MP4 local', async () => {
     const result = await service.authorize('user', 'session', { episodeId: 'episode' });
     expect(result.protected).toBe(true);
+    expect(result.playback).toMatchObject({ type: 'original', url: result.url });
     const query = Object.fromEntries(new URL(result.url, 'http://local').searchParams.entries());
     await expect(service.validateAndLog(query)).resolves.toBe('/protected-media/videos/demo.mp4');
   });
@@ -21,10 +22,30 @@ describe('MediaService', () => {
     await expect(service.validateAndLog({ uid:'u',sid:'s',path:'videos/demo.mp4',exp:'1',eid:'e',mid:'',sig:'x' })).rejects.toThrow('vencido');
   });
 
+  it('autoriza MP4 remux como reproduccion nativa protegida', async () => {
+    prisma.episode.findFirst.mockResolvedValueOnce({ mediaFileId: 'media-1', videoUrl: '/uploads/videos/remux-job123.mp4', originalVideoUrl: '/uploads/videos/demo.mkv', remuxedVideoUrl: '/uploads/videos/remux-job123.mp4', processedVideoUrl: '/uploads/hls/job123/master.m3u8', playbackMode: 'REMUX' });
+    const result = await service.authorize('user', 'session', { episodeId: 'episode' });
+    expect(result.playback).toMatchObject({ type: 'remux' });
+    const query = Object.fromEntries(new URL(result.url, 'http://local').searchParams.entries());
+    await expect(service.validateAndLog(query)).resolves.toBe('/protected-media/videos/remux-job123.mp4');
+  });
+
+  it('no cae al videoUrl legado cuando falta la version REMUX seleccionada', async () => {
+    prisma.episode.findFirst.mockResolvedValueOnce({ mediaFileId: 'media-1', videoUrl: '/uploads/videos/demo.mp4', originalVideoUrl: '/uploads/videos/demo.mp4', remuxedVideoUrl: null, processedVideoUrl: null, playbackMode: 'REMUX' });
+    await expect(service.authorize('user', 'session', { episodeId: 'episode' })).rejects.toThrow('aun no esta disponible');
+  });
+
+  it('rechaza un MP4 seleccionado que falta fisicamente en almacenamiento local', async () => {
+    prisma.episode.findFirst.mockResolvedValueOnce({ mediaFileId: 'media-1', originalVideoUrl: '/uploads/videos/demo.mp4', remuxedVideoUrl: null, processedVideoUrl: null, playbackMode: 'ORIGINAL' });
+    storage.exists.mockResolvedValueOnce(false);
+    await expect(service.authorize('user', 'session', { episodeId: 'episode' })).rejects.toThrow('no esta disponible');
+  });
+
   it('protege HLS local con una URL temporal firmada', async () => {
     prisma.episode.findFirst.mockResolvedValueOnce({ videoUrl: '/uploads/hls/job123/master.m3u8' });
     const result = await service.authorize('user', 'session', { episodeId: 'episode' });
     expect(result.protected).toBe(true);
+    expect(result.playback).toMatchObject({ type: 'hls', url: result.url });
     expect(result.url).toMatch(/^\/api\/media\/hls\?/);
     const params = Object.fromEntries(new URL(result.url, 'http://local').searchParams.entries());
     const manifest = await service.deliverHls(params);

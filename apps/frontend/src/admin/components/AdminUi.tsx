@@ -34,11 +34,11 @@ export function Button({ className = '', ...props }: React.ButtonHTMLAttributes<
   return <button {...props} className={`button-primary ${className}`} />;
 }
 
-export function FormDisclosure({ open, title, description, editing, onToggle, children }: { open: boolean; title: string; description: string; editing?: boolean; onToggle: () => void; children: ReactNode }) {
+export function FormDisclosure({ open, title, description, editing, heading, onToggle, children }: { open: boolean; title: string; description: string; editing?: boolean; heading?: string; onToggle: () => void; children: ReactNode }) {
   return (
     <section className="mb-6 overflow-hidden rounded-2xl border border-line bg-panel/45">
       <button type="button" className="flex min-h-14 w-full items-center justify-between gap-4 px-4 py-3 text-left hover:bg-white/[0.025] sm:px-5" aria-expanded={open} onClick={onToggle}>
-        <span><span className="flex items-center gap-2 font-semibold text-white"><Plus size={17} className="text-brand" />{editing ? `Editar ${title.toLocaleLowerCase('es')}` : `Crear ${title.toLocaleLowerCase('es')}`}</span><span className="mt-1 block text-xs text-slate-400">{description}</span></span>
+        <span><span className="flex items-center gap-2 font-semibold text-white"><Plus size={17} className="text-brand" />{heading ?? (editing ? `Editar ${title.toLocaleLowerCase('es')}` : `Crear ${title.toLocaleLowerCase('es')}`)}</span><span className="mt-1 block text-xs text-slate-400">{description}</span></span>
         <ChevronDown size={19} className={`shrink-0 text-slate-400 transition ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && <div className="border-t border-line p-4 sm:p-5">{children}</div>}

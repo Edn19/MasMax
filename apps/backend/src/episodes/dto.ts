@@ -3,6 +3,7 @@ import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsI
 
 const videoSources = ['LOCAL', 'URL', 'DRIVE', 'HLS', 'EMBED'] as const;
 const videoTypes = ['MP4', 'HLS', 'DRIVE', 'EMBED'] as const;
+const playbackModes = ['ORIGINAL', 'REMUX', 'HLS'] as const;
 
 export class CreateEpisodeDto {
   @IsString() @IsNotEmpty() seriesId!: string;
@@ -14,7 +15,10 @@ export class CreateEpisodeDto {
   @IsOptional() @IsIn(videoSources) videoSource?: 'LOCAL' | 'URL' | 'DRIVE' | 'HLS' | 'EMBED';
   @IsOptional() @IsIn(videoTypes) videoType?: 'MP4' | 'HLS' | 'DRIVE' | 'EMBED';
   @IsOptional() @IsString() @Matches(/^[a-zA-Z0-9_-]+$/) processingJobId?: string;
+  @IsOptional() @IsString() @Matches(/^[a-zA-Z0-9_-]+$/) mediaFileId?: string;
+  @IsOptional() @IsIn(playbackModes) playbackMode?: 'ORIGINAL' | 'REMUX' | 'HLS';
   @IsOptional() @IsString() originalVideoUrl?: string;
+  @IsOptional() @IsString() remuxedVideoUrl?: string;
   @IsOptional() @IsString() processedVideoUrl?: string;
   @IsOptional() @IsString() thumbnailUrl?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) durationSec?: number;
@@ -36,7 +40,10 @@ export class UpdateEpisodeDto {
   @IsOptional() @IsIn(videoSources) videoSource?: 'LOCAL' | 'URL' | 'DRIVE' | 'HLS' | 'EMBED';
   @IsOptional() @IsIn(videoTypes) videoType?: 'MP4' | 'HLS' | 'DRIVE' | 'EMBED';
   @IsOptional() @IsString() @Matches(/^[a-zA-Z0-9_-]+$/) processingJobId?: string;
+  @IsOptional() @IsString() @Matches(/^[a-zA-Z0-9_-]+$/) mediaFileId?: string | null;
+  @IsOptional() @IsIn(playbackModes) playbackMode?: 'ORIGINAL' | 'REMUX' | 'HLS';
   @IsOptional() @IsString() originalVideoUrl?: string;
+  @IsOptional() @IsString() remuxedVideoUrl?: string;
   @IsOptional() @IsString() processedVideoUrl?: string;
   @IsOptional() @IsString() thumbnailUrl?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) durationSec?: number;

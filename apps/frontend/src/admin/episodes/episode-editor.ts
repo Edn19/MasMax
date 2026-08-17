@@ -1,4 +1,4 @@
-import { EpisodeProcessingJob, Season, SubtitleTrack, VideoSource, VideoType } from '../../types/models';
+import { EpisodePlaybackMode, EpisodeProcessingJob, Season, SubtitleTrack, VideoSource, VideoType } from '../../types/models';
 import { EpisodeVideoMode } from './episode-video-linking';
 
 type LegacySeason = Omit<Partial<Season>, 'seriesId'> & {
@@ -20,7 +20,9 @@ export type EpisodeEditorSource = {
   subtitles?: SubtitleTrack[] | null;
   videoUrl?: string | null;
   originalVideoUrl?: string | null;
+  remuxedVideoUrl?: string | null;
   processedVideoUrl?: string | null;
+  playbackMode?: EpisodePlaybackMode | null;
   videoSource?: VideoSource | null;
   videoType?: VideoType | null;
   thumbnailUrl?: string | null;
@@ -31,6 +33,8 @@ export type EpisodeEditorSource = {
   recapEndSec?: number | null;
   processingJob?: EpisodeProcessingJob | null;
   processingJobId?: string | null;
+  mediaFileId?: string | null;
+  mediaFile?: { id: string; originalName: string; sizeBytes: string | number; mimeType: string; extension: string; status: string; width?: number | null; height?: number | null; durationSec?: number | null; videoCodec?: string | null; audioCodec?: string | null; createdAt: string } | null;
 };
 
 export type EpisodeFormState = {
@@ -42,10 +46,13 @@ export type EpisodeFormState = {
   description: string;
   videoMode: EpisodeVideoMode;
   processingJobId: string;
+  mediaFileId: string;
   processingJobStatus: EpisodeVideoState['status'];
   videoUrl: string;
   originalVideoUrl: string;
+  remuxedVideoUrl: string;
   processedVideoUrl: string;
+  playbackMode: EpisodePlaybackMode;
   videoSource: VideoSource;
   videoType: VideoType;
   thumbnailUrl: string;
@@ -61,9 +68,10 @@ export type EpisodeFormState = {
 export type EpisodeVideoState = {
   mode: EpisodeVideoMode;
   processingJobId: string;
-  status: 'NONE' | 'URL' | EpisodeProcessingJob['status'] | 'MISSING';
+  status: 'NONE' | 'URL' | 'ORIGINAL' | EpisodeProcessingJob['status'] | 'MISSING';
   videoUrl: string;
   originalVideoUrl: string;
+  remuxedVideoUrl: string;
   processedVideoUrl: string;
   videoSource: VideoSource;
   videoType: VideoType;
@@ -76,10 +84,13 @@ export type UpdateEpisodePayload = {
   title: string;
   description: string;
   processingJobId?: string;
+  mediaFileId?: string | null;
+  playbackMode: EpisodePlaybackMode;
   videoSource?: VideoSource;
   videoType?: VideoType;
   videoUrl?: string;
   originalVideoUrl?: string;
+  remuxedVideoUrl?: string;
   processedVideoUrl?: string;
   thumbnailUrl?: string;
   durationSec?: number;
@@ -94,31 +105,35 @@ export type UpdateEpisodePayload = {
 export function resolveEpisodeVideoState(episode: EpisodeEditorSource): EpisodeVideoState {
   const directUrl = stringValue(episode.videoUrl);
   const originalUrl = stringValue(episode.originalVideoUrl) || directUrl;
+  const remuxedUrl = stringValue(episode.remuxedVideoUrl);
   const processedUrl = stringValue(episode.processedVideoUrl) || directUrl;
   const jobId = stringValue(episode.processingJob?.id) || stringValue(episode.processingJobId);
+  const activeJobId = episode.processingJob && ['QUEUED', 'PROCESSING'].includes(episode.processingJob.status) ? jobId : '';
   const inferred = inferVideoType(processedUrl || directUrl);
   const videoSource = episode.videoSource ?? inferred.videoSource;
   const videoType = episode.videoType ?? inferred.videoType;
 
-  if (jobId) {
+  if (jobId || episode.mediaFileId) {
     const jobUrl = stringValue(episode.processingJob?.masterUrl);
+    const playbackMode = episode.playbackMode ?? (processedUrl || jobUrl ? 'HLS' : 'ORIGINAL');
     return {
       mode: 'AVAILABLE',
-      processingJobId: jobId,
-      status: episode.processingJob?.status ?? 'MISSING',
-      videoUrl: directUrl || jobUrl,
+      processingJobId: activeJobId,
+      status: episode.processingJob?.status ?? (episode.mediaFileId ? 'ORIGINAL' : 'MISSING'),
+      videoUrl: directUrl || (playbackMode === 'HLS' ? jobUrl : playbackMode === 'REMUX' ? remuxedUrl : originalUrl),
       originalVideoUrl: originalUrl,
+      remuxedVideoUrl: remuxedUrl,
       processedVideoUrl: processedUrl || jobUrl,
-      videoSource: jobUrl ? 'HLS' : videoSource,
-      videoType: jobUrl ? 'HLS' : videoType,
+      videoSource: playbackMode === 'HLS' && (processedUrl || jobUrl) ? 'HLS' : videoSource,
+      videoType: playbackMode === 'HLS' && (processedUrl || jobUrl) ? 'HLS' : videoType,
     };
   }
 
   if (directUrl) {
-    return { mode: 'URL', processingJobId: '', status: 'URL', videoUrl: directUrl, originalVideoUrl: originalUrl, processedVideoUrl: processedUrl, videoSource, videoType };
+    return { mode: 'URL', processingJobId: '', status: 'URL', videoUrl: directUrl, originalVideoUrl: originalUrl, remuxedVideoUrl: remuxedUrl, processedVideoUrl: processedUrl, videoSource, videoType };
   }
 
-  return { mode: 'NONE', processingJobId: '', status: 'NONE', videoUrl: '', originalVideoUrl: '', processedVideoUrl: '', videoSource, videoType };
+  return { mode: 'NONE', processingJobId: '', status: 'NONE', videoUrl: '', originalVideoUrl: '', remuxedVideoUrl: '', processedVideoUrl: '', videoSource, videoType };
 }
 
 export function episodeToFormState(episode: EpisodeEditorSource): EpisodeFormState {
@@ -132,10 +147,13 @@ export function episodeToFormState(episode: EpisodeEditorSource): EpisodeFormSta
     description: stringValue(episode.description),
     videoMode: video.mode,
     processingJobId: video.processingJobId,
+    mediaFileId: stringValue(episode.mediaFileId),
     processingJobStatus: video.status,
     videoUrl: video.videoUrl,
     originalVideoUrl: video.originalVideoUrl,
+    remuxedVideoUrl: video.remuxedVideoUrl,
     processedVideoUrl: video.processedVideoUrl,
+    playbackMode: episode.playbackMode ?? (video.videoType === 'HLS' ? 'HLS' : 'ORIGINAL'),
     videoSource: video.videoSource,
     videoType: video.videoType,
     thumbnailUrl: stringValue(episode.thumbnailUrl),
@@ -176,7 +194,8 @@ export function validateEpisodeBasicInfo(form: Pick<EpisodeFormState, 'number' |
 }
 
 export function episodeFormToUpdatePayload(form: EpisodeFormState, hasReadyVideo: boolean): UpdateEpisodePayload {
-  const usesJob = Boolean(form.processingJobId && form.processingJobStatus !== 'MISSING' && (form.videoMode === 'UPLOAD' || form.videoMode === 'AVAILABLE'));
+  const usesMedia = Boolean(form.mediaFileId && (form.videoMode === 'UPLOAD' || form.videoMode === 'AVAILABLE'));
+  const usesJob = Boolean(!usesMedia && form.processingJobId && form.processingJobStatus !== 'MISSING' && (form.videoMode === 'UPLOAD' || form.videoMode === 'AVAILABLE'));
   const usesUrl = form.videoMode === 'URL' && Boolean(form.videoUrl.trim());
   return {
     seasonId: form.seasonId,
@@ -185,11 +204,14 @@ export function episodeFormToUpdatePayload(form: EpisodeFormState, hasReadyVideo
     title: form.title.trim(),
     description: form.description.trim(),
     processingJobId: usesJob ? form.processingJobId : undefined,
+    mediaFileId: usesMedia ? form.mediaFileId : form.videoMode === 'NONE' || form.videoMode === 'URL' ? null : undefined,
     videoSource: usesUrl ? form.videoSource : undefined,
     videoType: usesUrl ? form.videoType : undefined,
-    videoUrl: usesUrl ? form.videoUrl.trim() : undefined,
+    videoUrl: usesUrl ? form.videoUrl.trim() : form.videoMode === 'NONE' ? '' : undefined,
     originalVideoUrl: usesUrl ? optionalString(form.originalVideoUrl) : undefined,
+    remuxedVideoUrl: usesUrl ? optionalString(form.remuxedVideoUrl) : undefined,
     processedVideoUrl: usesUrl ? optionalString(form.processedVideoUrl) : undefined,
+    playbackMode: form.playbackMode,
     thumbnailUrl: optionalString(form.thumbnailUrl),
     durationSec: optionalNumber(form.durationSec),
     introStartSec: nullableNumber(form.introStartSec),

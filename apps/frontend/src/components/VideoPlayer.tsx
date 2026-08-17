@@ -29,6 +29,7 @@ export function VideoPlayer({ src = '', type, source, originalSrc, poster, episo
   const [loading, setLoading] = useState(true);
   const [driveFallback, setDriveFallback] = useState(false);
   const [playbackSrc, setPlaybackSrc] = useState(src);
+  const [playbackType, setPlaybackType] = useState<VideoType>(type);
   const [authorizedOriginalSrc, setAuthorizedOriginalSrc] = useState(originalSrc);
   const [subtitleSources, setSubtitleSources] = useState<Array<{ track: SubtitleTrack; src: string }>>([]);
   const [qualities, setQualities] = useState<QualityOption[]>([]);
@@ -85,13 +86,13 @@ export function VideoPlayer({ src = '', type, source, originalSrc, poster, episo
   }, [subtitles]);
 
   useEffect(() => {
-    setDriveFallback(false); setError(null); setLoading(true); setPlaybackSrc(src); setQualities([]); setAudioTracks([]); setNextCountdown(null);
+    setDriveFallback(false); setError(null); setLoading(true); setPlaybackSrc(src); setPlaybackType(type); setQualities([]); setAudioTracks([]); setNextCountdown(null);
     lastSavedRef.current = -1; startedRef.current = false; retryRef.current = 0;
     if (episodeId || movieId) {
       const params = new URLSearchParams(episodeId ? { episodeId } : { movieId: movieId! });
-      api<{ url: string; originalUrl?: string }>(`/media/authorize?${params}`).then((result) => { setPlaybackSrc(result.url); setAuthorizedOriginalSrc(result.originalUrl); }).catch((reason: Error) => setError(reason.message));
+      api<{ url: string; type?: 'hls' | 'original' | 'remux'; playback?: { type: 'hls' | 'original' | 'remux'; url: string }; originalUrl?: string }>(`/media/authorize?${params}`).then((result) => { const playback = result.playback ?? { type: result.type ?? (type === 'HLS' ? 'hls' : 'original'), url: result.url }; setPlaybackSrc(playback.url); setPlaybackType(playback.type === 'hls' ? 'HLS' : 'MP4'); setAuthorizedOriginalSrc(result.originalUrl); }).catch((reason: Error) => setError(reason.message));
     }
-  }, [src, source, episodeId, movieId]);
+  }, [src, source, type, episodeId, movieId]);
 
   useEffect(() => {
     if (isEmbedded) return;
@@ -99,7 +100,7 @@ export function VideoPlayer({ src = '', type, source, originalSrc, poster, episo
     if (!video) return;
     setError(null);
     let hls: Hls | undefined;
-    if (type === 'HLS' && Hls.isSupported()) {
+    if (playbackType === 'HLS' && Hls.isSupported()) {
       hls = new Hls({ enableWorker: true }); hlsRef.current = hls;
       hls.loadSource(playbackSrc); hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -117,11 +118,11 @@ export function VideoPlayer({ src = '', type, source, originalSrc, poster, episo
         if (retryRef.current++ < 2 && data.type === Hls.ErrorTypes.MEDIA_ERROR) { hls!.recoverMediaError(); return; }
         setLoading(false); setError(playbackError);
       });
-    } else if (type === 'HLS' && video.canPlayType('application/vnd.apple.mpegurl')) video.src = playbackSrc;
-    else if (type === 'HLS') { setLoading(false); setError(playbackError); }
+    } else if (playbackType === 'HLS' && video.canPlayType('application/vnd.apple.mpegurl')) video.src = playbackSrc;
+    else if (playbackType === 'HLS') { setLoading(false); setError(playbackError); }
     else video.src = playbackSrc;
     return () => { hls?.destroy(); if (hlsRef.current === hls) hlsRef.current = null; };
-  }, [isEmbedded, playbackSrc, type]);
+  }, [isEmbedded, playbackSrc, playbackType]);
 
   useEffect(() => {
     const video = videoRef.current;

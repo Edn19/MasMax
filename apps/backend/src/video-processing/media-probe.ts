@@ -1,6 +1,6 @@
 import { BadRequestException, Logger } from '@nestjs/common';
 import { spawn } from 'child_process';
-import { open } from 'fs/promises';
+import { open, stat } from 'fs/promises';
 import { extname } from 'path';
 
 export type ProbeStream = {
@@ -39,10 +39,12 @@ export type MediaProbeMetadata = {
   audioTracks: AudioTrackMetadata[];
   subtitleTracks: SubtitleTrackMetadata[];
   streamCount: number;
+  fastStart: boolean | null;
 };
 
-export const allowedVideoExtensions = ['.mp4', '.mkv'] as const;
-export const allowedVideoMimeTypes = ['video/mp4', 'application/mp4', 'video/matroska', 'video/x-matroska', 'application/x-matroska', 'application/octet-stream', ''] as const;
+export type AllowedVideoExtension = '.mp4' | '.mkv' | '.mov' | '.webm';
+export const allowedVideoExtensions = ['.mp4', '.mkv', '.mov', '.webm'] as const;
+export const allowedVideoMimeTypes = ['video/mp4', 'application/mp4', 'video/quicktime', 'video/matroska', 'video/x-matroska', 'application/x-matroska', 'video/webm', 'application/octet-stream', ''] as const;
 const allowedExtensionSet = new Set<string>(allowedVideoExtensions);
 const allowedMimeTypeSet = new Set<string>(allowedVideoMimeTypes);
 const textSubtitleCodecs = new Set(['subrip', 'srt', 'ass', 'ssa', 'webvtt', 'mov_text']);
@@ -58,24 +60,24 @@ export function validateUploadIdentity(originalName: string, mimeType: string) {
   if (/[\\/]/.test(originalName)) throw new BadRequestException('El nombre del archivo no puede contener rutas');
   const extension = extname(originalName).toLowerCase();
   const normalizedMime = (mimeType ?? '').trim().toLowerCase();
-  if (!allowedExtensionSet.has(extension) || !allowedMimeTypeSet.has(normalizedMime)) throw new BadRequestException('El tipo de archivo no es compatible. Usa MP4 o MKV.');
-  return { extension: extension as '.mp4' | '.mkv', mimeType: normalizedMime };
+  if (!allowedExtensionSet.has(extension) || !allowedMimeTypeSet.has(normalizedMime)) throw new BadRequestException('El tipo de archivo no es compatible. Usa MP4, MKV, MOV o WebM.');
+  return { extension: extension as AllowedVideoExtension, mimeType: normalizedMime };
 }
 
-export async function assertContainerSignature(path: string, extension: '.mp4' | '.mkv') {
+export async function assertContainerSignature(path: string, extension: AllowedVideoExtension) {
   const handle = await open(path, 'r');
   try {
     const buffer = Buffer.alloc(16);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     if (bytesRead < 8) throw new BadRequestException('El archivo no contiene un video MP4 o MKV valido.');
-    const valid = extension === '.mp4'
+    const valid = extension === '.mp4' || extension === '.mov'
       ? buffer.subarray(4, 8).toString('ascii') === 'ftyp'
       : buffer.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
-    if (!valid) throw new BadRequestException('El archivo no contiene un video MP4 o MKV valido.');
+    if (!valid) throw new BadRequestException('La firma del contenedor de video no coincide con el archivo enviado.');
   } finally { await handle.close(); }
 }
 
-export async function probeMedia(path: string, expectedExtension?: '.mp4' | '.mkv'): Promise<MediaProbeMetadata> {
+export async function probeMedia(path: string, expectedExtension?: AllowedVideoExtension): Promise<MediaProbeMetadata> {
   const raw = await runFfprobe(path);
   const streams = raw.streams ?? [];
   if (streams.length === 0 || streams.length > 64) throw new BadRequestException('El archivo tiene una cantidad de streams no valida');
@@ -86,7 +88,8 @@ export async function probeMedia(path: string, expectedExtension?: '.mp4' | '.mk
   if (video.width < 16 || video.height < 16 || video.width > 7680 || video.height > 4320) throw new BadRequestException('La resolucion del video no es valida');
   const formatName = raw.format?.format_name?.toLowerCase() ?? '';
   const container = detectContainer(formatName);
-  if (!container || (expectedExtension === '.mp4' && container !== 'mp4') || (expectedExtension === '.mkv' && container !== 'matroska')) {
+  const expectedContainer = expectedExtension === '.mp4' || expectedExtension === '.mov' ? 'mp4' : expectedExtension ? 'matroska' : null;
+  if (!container || (expectedContainer && container !== expectedContainer)) {
     throw new BadRequestException('El contenedor detectado por ffprobe no coincide con el archivo enviado');
   }
   return {
@@ -103,7 +106,37 @@ export async function probeMedia(path: string, expectedExtension?: '.mp4' | '.mk
     audioTracks: streams.filter((stream) => stream.codec_type === 'audio').map((stream) => ({ index: stream.index, codec: stream.codec_name?.toLowerCase() ?? 'unknown', language: stream.tags?.language?.toLowerCase() || 'und', title: stream.tags?.title?.trim() || 'Audio principal', channels: stream.channels ?? 0 })),
     subtitleTracks: streams.filter((stream) => stream.codec_type === 'subtitle').map((stream) => { const codec = stream.codec_name?.toLowerCase() ?? 'unknown'; return { index: stream.index, codec, language: stream.tags?.language?.toLowerCase() || 'und', title: stream.tags?.title?.trim() || 'Subtitulos', textBased: textSubtitleCodecs.has(codec) }; }),
     streamCount: streams.length,
+    fastStart: container === 'mp4' ? await detectMp4FastStart(path) : null,
   };
+}
+
+export async function detectMp4FastStart(path: string): Promise<boolean | null> {
+  const size = (await stat(path)).size;
+  const handle = await open(path, 'r');
+  try {
+    let offset = 0;
+    let sawMdat = false;
+    for (let boxes = 0; boxes < 256 && offset + 8 <= size; boxes += 1) {
+      const header = Buffer.alloc(16);
+      const { bytesRead } = await handle.read(header, 0, header.length, offset);
+      if (bytesRead < 8) return null;
+      const type = header.subarray(4, 8).toString('ascii');
+      let boxSize = Number(header.readUInt32BE(0));
+      let headerSize = 8;
+      if (boxSize === 1) {
+        if (bytesRead < 16) return null;
+        const extended = header.readBigUInt64BE(8);
+        if (extended > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+        boxSize = Number(extended);
+        headerSize = 16;
+      } else if (boxSize === 0) boxSize = size - offset;
+      if (boxSize < headerSize || offset + boxSize > size) return null;
+      if (type === 'moov') return !sawMdat;
+      if (type === 'mdat') sawMdat = true;
+      offset += boxSize;
+    }
+    return null;
+  } finally { await handle.close(); }
 }
 
 export function canCopyVideo(metadata: MediaProbeMetadata, targetHeight: number) {

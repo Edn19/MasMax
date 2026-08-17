@@ -18,7 +18,7 @@ describe('EpisodesService admin detail', () => {
     episode: { findFirst: vi.fn() },
     videoProcessingJob: { findFirst: vi.fn() },
   };
-  const storage = { publicUrl: vi.fn((path: string) => `/uploads/${path}`) };
+  const storage = { publicUrl: vi.fn((path: string) => `/uploads/${path}`), exists: vi.fn().mockResolvedValue(true) };
   const service = new EpisodesService(prisma as never, storage as never);
 
   beforeEach(() => vi.clearAllMocks());

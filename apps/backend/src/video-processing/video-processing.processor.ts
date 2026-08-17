@@ -1,13 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { MediaStatus, MediaType, Prisma, VideoProcessingTargetType } from '@prisma/client';
+import { MediaStatus, MediaType, Prisma, VideoProcessingKind, VideoProcessingTargetType } from '@prisma/client';
 import { spawn } from 'child_process';
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'fs/promises';
 import { basename, dirname, join, relative } from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 import { ObjectStorageService } from '../storage/object-storage.service';
 import { absoluteSegmentPlaylist, masterPlaylist, selectVideoProfiles } from './video-processing.utils';
-import { canCopyPrimaryAudio, canCopyVideo, MediaProbeMetadata, probeMedia, SubtitleTrackMetadata } from './media-probe';
+import { AllowedVideoExtension, canCopyPrimaryAudio, canCopyVideo, MediaProbeMetadata, probeMedia, SubtitleTrackMetadata } from './media-probe';
+import { planMp4Remux } from './remux-policy';
 
 class ProcessingCancelledError extends Error {}
 type ExtractedSubtitle = { url: string; key: string; language: string; label: string; originalName: string; size: number };
@@ -21,6 +22,7 @@ export class VideoProcessingProcessor {
     if (!/^[a-z0-9]+$/i.test(id)) throw new Error('Identificador de procesamiento no valido');
     const current = await this.prisma.videoProcessingJob.findUnique({ where: { id }, include: { inputMediaFile: true } });
     if (!current || current.status !== 'QUEUED') return;
+    if (current.kind === VideoProcessingKind.REMUX) return this.processRemux(current);
     const workRoot = join(this.config.get<string>('UPLOAD_DIR') ?? join(process.cwd(), 'uploads'), 'tmp', 'processing', id);
     const hlsRoot = join(workRoot, 'hls');
     const downloadedInput = join(workRoot, `input${current.inputMediaFile.extension}`);
@@ -32,7 +34,7 @@ export class VideoProcessingProcessor {
       await mkdir(hlsRoot, { recursive: true });
       if (!localInput) await this.storage.downloadToFile(current.inputMediaFile.relativePath, downloadedInput);
       await this.prisma.videoProcessingJob.update({ where: { id }, data: { status: 'PROCESSING', processingStage: 'PROBING', progress: 1, startedAt: new Date(), completedAt: null, errorMessage: null } });
-      const expectedExtension = current.inputMediaFile.extension.toLowerCase() === '.mkv' ? '.mkv' : '.mp4';
+      const expectedExtension = current.inputMediaFile.extension.toLowerCase() as AllowedVideoExtension;
       const metadata = localInput
         ? await this.probeLocalInput(inputPath, expectedExtension)
         : await probeMedia(inputPath, expectedExtension);
@@ -118,13 +120,67 @@ export class VideoProcessingProcessor {
       const message = (cancelled ? 'Procesamiento cancelado por el administrador' : error instanceof Error ? error.message : 'Error desconocido de FFmpeg').slice(0, 500);
       await this.prisma.$transaction([
         this.prisma.videoProcessingJob.update({ where: { id }, data: { status: cancelled ? 'CANCELLED' : 'FAILED', processingStage: cancelled ? 'CANCELLED' : 'FAILED', errorMessage: message, completedAt: new Date(), cancelRequested: cancelled } }),
-        this.prisma.mediaFile.update({ where: { id: current.inputMediaFileId }, data: { status: cancelled ? MediaStatus.READY : MediaStatus.FAILED, errorMessage: cancelled ? null : message } }),
+        this.prisma.mediaFile.update({ where: { id: current.inputMediaFileId }, data: { status: MediaStatus.READY, errorMessage: null } }),
       ]).catch(() => undefined);
       throw error;
     } finally { await rm(workRoot, { recursive: true, force: true }).catch(() => undefined); }
   }
 
-  private async probeLocalInput(inputPath: string, extension: '.mp4' | '.mkv') {
+  private async processRemux(current: Prisma.VideoProcessingJobGetPayload<{ include: { inputMediaFile: true } }>) {
+    const id = current.id;
+    const workRoot = join(this.config.get<string>('UPLOAD_DIR') ?? join(process.cwd(), 'uploads'), 'tmp', 'processing', id);
+    const downloadedInput = join(workRoot, `input${current.inputMediaFile.extension}`);
+    const outputPath = join(workRoot, 'output.mp4');
+    const localInput = this.storage.localPath(current.inputMediaFile.relativePath);
+    const inputPath = localInput ?? downloadedInput;
+    const outputKey = `videos/remux-${id}.mp4`;
+    let uploaded = false;
+    try {
+      await rm(workRoot, { recursive: true, force: true });
+      await mkdir(workRoot, { recursive: true });
+      if (!localInput) await this.storage.downloadToFile(current.inputMediaFile.relativePath, downloadedInput);
+      await this.prisma.videoProcessingJob.update({ where: { id }, data: { status: 'PROCESSING', processingStage: 'REMUX_PROBING', progress: 2, startedAt: new Date(), completedAt: null, errorMessage: null } });
+      const metadata = await probeMedia(inputPath, current.inputMediaFile.extension.toLowerCase() as AllowedVideoExtension);
+      const plan = planMp4Remux(metadata);
+      if (!plan.allowed) throw new Error(plan.message);
+      await this.assertDiskSpace(current.inputMediaFile.sizeBytes);
+      await this.prisma.videoProcessingJob.update({ where: { id }, data: { processingStage: plan.copyAudio ? 'REMUX_STREAM_COPY' : 'REMUX_AUDIO_TO_AAC', progress: 5, sourceWidth: metadata.width, sourceHeight: metadata.height, durationSec: metadata.durationSec, sourceFormat: metadata.formatName, sourceVideoCodec: metadata.videoCodec, sourceAudioCodecs: metadata.audioTracks.map((track) => track.codec), sourceMetadata: this.json({ ...metadata, remuxPlan: plan }), audioTracks: this.json(metadata.audioTracks), subtitleTracks: this.json(metadata.subtitleTracks) } });
+      const args = ['-hide_banner', '-y', '-i', inputPath, '-map', '0:v:0', '-map', '0:a?', '-map_metadata', '0', '-map_chapters', '0', '-c:v', 'copy'];
+      if (metadata.audioTracks.length) args.push('-c:a', plan.copyAudio ? 'copy' : 'aac', ...(plan.copyAudio ? [] : ['-b:a', this.audioBitrate()]));
+      args.push('-sn', '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', outputPath);
+      await this.runFfmpeg(id, args, metadata.durationSec, (progress) => this.updateProgress(id, Math.min(90, 5 + Math.round(progress * 0.85))));
+      await this.updateProgress(id, 92, 'REMUX_VALIDATING');
+      const outputMetadata = await probeMedia(outputPath, '.mp4');
+      if (!['h264', 'avc1'].includes(outputMetadata.videoCodec) || outputMetadata.durationSec < metadata.durationSec * 0.8) throw new Error('La salida MP4 remux no supero la validacion');
+      const outputSize = (await stat(outputPath)).size;
+      await this.storage.putFile(outputKey, outputPath, { contentType: 'video/mp4' });
+      uploaded = true;
+      const output = await this.prisma.$transaction(async (tx) => {
+        const media = await tx.mediaFile.create({ data: { originalName: `${current.inputMediaFile.originalName} (MP4 remux)`, storageName: `remux-${id}.mp4`, relativePath: outputKey, mimeType: 'video/mp4', extension: '.mp4', sizeBytes: BigInt(outputSize), mediaType: MediaType.VIDEO, status: MediaStatus.READY, width: outputMetadata.width, height: outputMetadata.height, durationSec: outputMetadata.durationSec, bitrate: outputMetadata.bitrate ? Math.round(outputMetadata.bitrate) : null, videoCodec: outputMetadata.videoCodec, audioCodec: outputMetadata.audioTracks[0]?.codec ?? null, probeMetadata: this.json(outputMetadata) } });
+        return tx.videoProcessingJob.update({ where: { id }, data: { outputMediaFileId: media.id, status: 'COMPLETED', processingStage: 'COMPLETED', progress: 100, completedAt: new Date(), cancelRequested: false } });
+      });
+      const destination = await this.prisma.videoProcessingJob.findUnique({ where: { id }, select: { targetType: true, targetId: true } });
+      if (destination?.targetType === VideoProcessingTargetType.EPISODE && destination.targetId) {
+        const url = this.storage.publicUrl(outputKey);
+        const episode = await this.prisma.episode.findUniqueOrThrow({ where: { id: destination.targetId }, select: { playbackMode: true } });
+        await this.prisma.episode.update({ where: { id: destination.targetId }, data: { mediaFileId: current.inputMediaFileId, originalVideoUrl: this.storage.publicUrl(current.inputMediaFile.relativePath), remuxedVideoUrl: url, durationSec: Math.round(outputMetadata.durationSec), ...(episode.playbackMode === 'REMUX' ? { videoUrl: url, videoSource: 'LOCAL', videoType: 'MP4' } : {}) } });
+        await this.prisma.videoProcessingJob.update({ where: { id }, data: { associatedAt: new Date() } });
+      }
+      await this.prisma.mediaFile.update({ where: { id: current.inputMediaFileId }, data: { status: MediaStatus.READY, errorMessage: null } });
+      this.logger.log(`Remux ${output.id} completado sin recodificar video`);
+    } catch (error) {
+      if (uploaded) await this.storage.delete(outputKey).catch(() => undefined);
+      const cancelled = error instanceof ProcessingCancelledError;
+      const message = (cancelled ? 'Procesamiento cancelado por el administrador' : error instanceof Error ? error.message : 'Error desconocido de FFmpeg').slice(0, 500);
+      await this.prisma.$transaction([
+        this.prisma.videoProcessingJob.update({ where: { id }, data: { status: cancelled ? 'CANCELLED' : 'FAILED', processingStage: cancelled ? 'CANCELLED' : 'FAILED', errorMessage: message, completedAt: new Date(), cancelRequested: cancelled } }),
+        this.prisma.mediaFile.update({ where: { id: current.inputMediaFileId }, data: { status: MediaStatus.READY, errorMessage: null } }),
+      ]).catch(() => undefined);
+      throw error;
+    } finally { await rm(workRoot, { recursive: true, force: true }).catch(() => undefined); }
+  }
+
+  private async probeLocalInput(inputPath: string, extension: AllowedVideoExtension) {
     const attempts = 20;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       try {
@@ -207,7 +263,9 @@ export class VideoProcessingProcessor {
     const thumbnailUrl = this.storage.publicUrl(thumbnailKey);
     await this.prisma.$transaction(async (tx) => {
       if (targetType === VideoProcessingTargetType.EPISODE) {
-        await tx.episode.update({ where: { id: targetId }, data: { videoSource: 'HLS', videoType: 'HLS', videoUrl, processedVideoUrl: videoUrl, thumbnailUrl, durationSec: Math.round(durationSec) } });
+        const job = await tx.videoProcessingJob.findUniqueOrThrow({ where: { id }, select: { inputMediaFileId: true, inputMediaFile: { select: { relativePath: true } } } });
+        const episode = await tx.episode.findUniqueOrThrow({ where: { id: targetId }, select: { playbackMode: true } });
+        await tx.episode.update({ where: { id: targetId }, data: { mediaFileId: job.inputMediaFileId, originalVideoUrl: this.storage.publicUrl(job.inputMediaFile.relativePath), processedVideoUrl: videoUrl, thumbnailUrl, durationSec: Math.round(durationSec), ...(episode.playbackMode === 'HLS' ? { videoSource: 'HLS', videoType: 'HLS', videoUrl } : {}) } });
       } else {
         await tx.movie.update({ where: { id: targetId }, data: { videoSource: 'HLS', videoType: 'HLS', videoUrl, processedVideoUrl: videoUrl, posterUrl: thumbnailUrl, duration: Math.max(1, Math.round(durationSec / 60)) } });
       }
@@ -222,6 +280,16 @@ export class VideoProcessingProcessor {
 
   private async deleteOriginal(id: string, mediaId: string, relativePath: string) {
     try {
+      const originalUrl = this.storage.publicUrl(relativePath);
+      const [episodeReferences, movieReferences] = await Promise.all([
+        this.prisma.episode.count({ where: { deletedAt: null, OR: [{ mediaFileId: mediaId }, { originalVideoUrl: originalUrl }] } }),
+        this.prisma.movie.count({ where: { deletedAt: null, originalVideoUrl: originalUrl } }),
+      ]);
+      if (episodeReferences + movieReferences > 1) {
+        await this.prisma.videoProcessingJob.update({ where: { id }, data: { retainOriginal: true } });
+        await this.prisma.mediaFile.update({ where: { id: mediaId }, data: { status: MediaStatus.READY } });
+        return;
+      }
       await this.storage.delete(relativePath);
       await this.prisma.mediaFile.update({ where: { id: mediaId }, data: { status: MediaStatus.DELETED, errorMessage: null } });
     } catch (error) {

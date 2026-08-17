@@ -9,7 +9,7 @@ import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { MediaValidationService } from './media-validation.service';
 import { Throttle } from '@nestjs/throttler';
 import { CurrentUser, JwtUser } from '../common/current-user.decorator';
-import { CompleteResumableUploadDto, InitiateResumableUploadDto, UploadPartDto } from './resumable-upload.dto';
+import { CompleteResumableUploadDto, InitiateResumableUploadDto, UploadPartDto, VideoUploadOptionsDto } from './resumable-upload.dto';
 import { ResumableUploadService } from './resumable-upload.service';
 import { VideoProcessingService } from '../video-processing/video-processing.service';
 import { uploadsConfig } from './uploads.config';
@@ -54,8 +54,8 @@ export class UploadsController {
   cancel(@CurrentUser() user: JwtUser, @Param('id') id: string) { return this.resumable.cancel(user.sub, id); }
   @Post('video')
   @Throttle({ default: { limit: 10, ttl: 3_600_000 } })
-  @UseInterceptors(FileInterceptor('file', { storage: temporaryStorage, limits: { fileSize: uploadsConfig.maxVideoUploadBytes, files: 1, fields: 0, parts: 2 }, fileFilter: (_request, file, callback) => { if (isAllowedVideoUploadIdentity(file.originalname, file.mimetype)) { callback(null, true); return; } uploadLogger.warn(JSON.stringify({ event: 'video_upload_type_rejected', originalName: file.originalname, mimeType: file.mimetype || '(vacio)' })); callback(new BadRequestException('El tipo de archivo no es compatible. Usa MP4 o MKV.'), false); } }))
-  async uploadVideo(@CurrentUser() user: JwtUser, @UploadedFile() file?: Express.Multer.File) { if (!file) throw new BadRequestException('No se recibio ningun archivo'); const result = await this.validation.validateVideo(file); return { ...result, processingJob: await this.processing.enqueue(user.sub, result.mediaId) }; }
+  @UseInterceptors(FileInterceptor('file', { storage: temporaryStorage, limits: { fileSize: uploadsConfig.maxVideoUploadBytes, files: 1, fields: 1, parts: 3 }, fileFilter: (_request, file, callback) => { if (isAllowedVideoUploadIdentity(file.originalname, file.mimetype)) { callback(null, true); return; } uploadLogger.warn(JSON.stringify({ event: 'video_upload_type_rejected', originalName: file.originalname, mimeType: file.mimetype || '(vacio)' })); callback(new BadRequestException('El tipo de archivo no es compatible. Usa MP4 o MKV.'), false); } }))
+  async uploadVideo(@CurrentUser() user: JwtUser, @Body() dto: VideoUploadOptionsDto, @UploadedFile() file?: Express.Multer.File) { if (!file) throw new BadRequestException('No se recibio ningun archivo'); const result = await this.validation.validateVideo(file); return { ...result, processingMode: dto.processingMode, processingJob: dto.processingMode === 'ORIGINAL' ? null : dto.processingMode === 'REMUX' ? await this.processing.enqueueRemux(user.sub, result.mediaId, { retainOriginal: true }) : await this.processing.enqueue(user.sub, result.mediaId, { retainOriginal: true }) }; }
 
   @Post('image')
   @Throttle({ default: { limit: 30, ttl: 3_600_000 } })

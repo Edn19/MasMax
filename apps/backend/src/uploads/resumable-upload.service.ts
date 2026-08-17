@@ -104,7 +104,8 @@ export class ResumableUploadService implements OnModuleInit, OnModuleDestroy {
       if (this.cancelledUploads.has(id)) throw new ConflictException('La carga fue cancelada durante el ensamblado');
       const file = { fieldname: 'file', originalname: upload.originalName, encoding: '7bit', mimetype: upload.mimeType, size: assembledStat.size, destination: this.tempRoot(), filename: `${id}.upload`, path: assembledPath, buffer: Buffer.alloc(0), stream: createReadStream(assembledPath) } as Express.Multer.File;
       const result = await this.validation.validateVideo(file);
-      const response = { ...result, processingJob: await this.processing.enqueue(userId, result.mediaId) };
+      const processingJob = dto.processingMode === 'ORIGINAL' ? null : dto.processingMode === 'REMUX' ? await this.processing.enqueueRemux(userId, result.mediaId, { retainOriginal: true }) : await this.processing.enqueue(userId, result.mediaId, { retainOriginal: true });
+      const response = { ...result, processingMode: dto.processingMode, processingJob };
       await this.prisma.resumableUpload.update({ where: { id }, data: { status: 'COMPLETED', result: response, checksum, expiresAt: new Date() } });
       await rm(this.sessionDir(id), { recursive: true, force: true });
       return response;

@@ -1,4 +1,4 @@
-import { MovieStatus, PrismaClient, SeriesStatus, VideoSource, VideoType } from '@prisma/client';
+import { EpisodePlaybackMode, MovieStatus, PrismaClient, SeriesStatus, VideoSource, VideoType } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -132,6 +132,7 @@ async function main() {
             episodeNumber % 2 === 0
               ? 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8'
               : 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+          playbackMode: episodeNumber % 2 === 0 ? EpisodePlaybackMode.HLS : EpisodePlaybackMode.ORIGINAL,
           videoSource: episodeNumber % 2 === 0 ? VideoSource.HLS : VideoSource.URL,
           thumbnailUrl: image(`${item.slug}-episode-${episodeNumber}`, 800, 450),
           published: true,

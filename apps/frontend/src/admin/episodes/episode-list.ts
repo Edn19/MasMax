@@ -28,12 +28,13 @@ export function episodePageCount(total: number, limit: number) {
   return Math.max(1, Math.ceil(total / Math.max(1, limit)));
 }
 
-export function episodeProcessingLabel(episode: Pick<Episode, 'videoUrl' | 'processingJob'>) {
-  if (episode.processingJob?.status === 'FAILED') return 'Procesamiento fallido';
-  if (episode.processingJob?.status === 'CANCELLED') return 'Procesamiento cancelado';
-  if (episode.processingJob?.status === 'PROCESSING') return `Procesando ${episode.processingJob.progress}%`;
-  if (episode.processingJob?.status === 'QUEUED') return 'En cola';
-  return episode.videoUrl ? 'Listo' : 'Sin video';
+export function episodeProcessingLabel(episode: Pick<Episode, 'videoUrl' | 'processingJob'> & Partial<Pick<Episode, 'mediaFileId'>>) {
+  const kind = episode.processingJob?.kind === 'REMUX' ? 'MP4 remux' : episode.processingJob?.kind === 'HLS' ? 'HLS' : 'Video';
+  if (episode.processingJob?.status === 'FAILED') return `${kind}: fallo`;
+  if (episode.processingJob?.status === 'CANCELLED') return `${kind}: cancelado`;
+  if (episode.processingJob?.status === 'PROCESSING') return `${kind}: procesando ${episode.processingJob.progress}%`;
+  if (episode.processingJob?.status === 'QUEUED') return `${kind}: en cola`;
+  return episode.mediaFileId || episode.videoUrl ? 'Sin proceso activo' : 'Sin video';
 }
 
 export function episodeDeleteLabel(episode: Pick<Episode, 'number' | 'title' | 'series' | 'season'>) {

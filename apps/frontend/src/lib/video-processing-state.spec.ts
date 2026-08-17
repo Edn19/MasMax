@@ -31,4 +31,6 @@ test('solo pide el archivo local para uploads incompletos sin job del servidor',
 
 test('presenta la etapa FFmpeg recuperada', () => {
   assert.equal(processingStageLabel('GENERATING_HLS_360P', 'PROCESSING'), 'Generando 360p');
+  assert.equal(processingStageLabel('REMUX_STREAM_COPY', 'PROCESSING'), 'Creando MP4 compatible');
+  assert.equal(processingStageLabel('REMUX_AUDIO_TO_AAC', 'PROCESSING'), 'Creando MP4 compatible y convirtiendo audio');
 });

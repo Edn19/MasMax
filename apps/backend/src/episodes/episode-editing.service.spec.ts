@@ -5,7 +5,7 @@ import { EpisodesService } from './episodes.service';
 describe('EpisodesService editing', () => {
   const current = {
     id: 'episode-1', seriesId: 'series-1', seasonId: 'season-1', number: 1, position: 1, title: 'Original', description: '',
-    videoUrl: 'https://media.example/episode.mp4', originalVideoUrl: 'https://media.example/episode.mp4', processedVideoUrl: null,
+    videoUrl: 'https://media.example/episode.mp4', originalVideoUrl: 'https://media.example/episode.mp4', processedVideoUrl: null, mediaFileId: null,
     videoSource: VideoSource.URL, videoType: VideoType.MP4, thumbnailUrl: null, durationSec: 120,
     introStartSec: null, introEndSec: null, recapStartSec: null, recapEndSec: null, published: false,
   };
@@ -98,6 +98,12 @@ describe('EpisodesService editing', () => {
     prisma.episode.findFirst.mockResolvedValueOnce(null);
     await expect(service.update('missing', { published: true }, 'admin-1')).rejects.toThrow('Episodio no encontrado');
     expect(tx.episode.update).not.toHaveBeenCalled();
+  });
+
+  it('desvincula el video sin eliminar archivos multimedia', async () => {
+    await service.update('episode-1', { mediaFileId: null, videoUrl: '', published: false }, 'admin-1');
+    expect(tx.episode.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ mediaFileId: null, videoUrl: null, originalVideoUrl: null, processedVideoUrl: null, published: false }) }));
+    expect(tx.videoProcessingJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: { targetType: null, targetId: null, associatedAt: null } }));
   });
 
   it('traduce un numero duplicado dentro de la temporada', async () => {

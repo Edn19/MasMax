@@ -2,6 +2,7 @@ export type Role = 'USER' | 'ADMIN';
 export type SeriesStatus = 'AIRING' | 'FINISHED' | 'PAUSED';
 export type VideoType = 'MP4' | 'HLS' | 'DRIVE' | 'EMBED';
 export type VideoSource = 'LOCAL' | 'URL' | 'DRIVE' | 'HLS' | 'EMBED';
+export type EpisodePlaybackMode = 'ORIGINAL' | 'REMUX' | 'HLS';
 export type MovieStatus = 'DRAFT' | 'PUBLISHED' | 'HIDDEN';
 export type SubtitleFormat = 'VTT' | 'SRT';
 
@@ -68,7 +69,11 @@ export type Episode = {
   videoType: VideoType;
   videoSource: VideoSource;
   originalVideoUrl?: string;
+  remuxedVideoUrl?: string;
   processedVideoUrl?: string;
+  playbackMode?: EpisodePlaybackMode;
+  mediaFileId?: string | null;
+  mediaFile?: { id: string; originalName: string; sizeBytes: string; mimeType: string; extension: string; status: string; width?: number; height?: number; durationSec?: number; videoCodec?: string; audioCodec?: string; createdAt: string } | null;
   thumbnailUrl?: string;
   durationSec?: number;
   introStartSec?: number;
@@ -86,6 +91,7 @@ export type Episode = {
 
 export type EpisodeProcessingJob = {
   id: string;
+  kind?: 'HLS' | 'REMUX';
   status: 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
   progress: number;
   stage: string;
@@ -93,6 +99,7 @@ export type EpisodeProcessingJob = {
   targetType?: 'EPISODE' | null;
   targetId?: string | null;
   masterUrl?: string | null;
+  outputUrl?: string | null;
   thumbnailUrl?: string | null;
   errorMessage?: string | null;
   createdAt: string;

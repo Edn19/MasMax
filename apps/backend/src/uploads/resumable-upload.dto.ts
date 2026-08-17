@@ -18,4 +18,9 @@ export class UploadPartDto {
 
 export class CompleteResumableUploadDto {
   @IsOptional() @Matches(/^[a-f0-9]{64}$/i) checksum?: string;
+  @IsOptional() @IsIn(['ORIGINAL', 'REMUX', 'HLS', 'TRANSCODE']) processingMode: 'ORIGINAL' | 'REMUX' | 'HLS' | 'TRANSCODE' = 'HLS';
+}
+
+export class VideoUploadOptionsDto {
+  @IsOptional() @IsIn(['ORIGINAL', 'REMUX', 'HLS', 'TRANSCODE']) processingMode: 'ORIGINAL' | 'REMUX' | 'HLS' | 'TRANSCODE' = 'HLS';
 }

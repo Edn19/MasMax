@@ -34,6 +34,12 @@ enum VideoSource {
   EMBED
 }
 
+enum EpisodePlaybackMode {
+  ORIGINAL
+  REMUX
+  HLS
+}
+
 enum MovieStatus {
   DRAFT
   PUBLISHED
@@ -84,6 +90,11 @@ enum VideoProcessingStatus {
   COMPLETED
   FAILED
   CANCELLED
+}
+
+enum VideoProcessingKind {
+  HLS
+  REMUX
 }
 
 enum VideoProcessingTargetType {
@@ -176,7 +187,11 @@ model Episode {
   videoType         VideoType         @default(MP4)
   videoSource       VideoSource       @default(URL)
   originalVideoUrl  String?
+  remuxedVideoUrl   String?
   processedVideoUrl String?
+  playbackMode      EpisodePlaybackMode @default(ORIGINAL)
+  mediaFileId       String?
+  mediaFile         MediaFile?        @relation("EpisodeMedia", fields: [mediaFileId], references: [id], onDelete: SetNull)
   thumbnailUrl      String?
   durationSec       Int?
   introStartSec     Int?
@@ -200,6 +215,7 @@ model Episode {
   @@index([seasonId, position, deletedAt])
   @@index([seriesId, published, deletedAt])
   @@index([publishedAt, deletedAt])
+  @@index([mediaFileId])
 }
 
 model Genre {
@@ -449,6 +465,7 @@ model MediaFile {
   updatedAt     DateTime             @updatedAt
   inputJobs     VideoProcessingJob[] @relation("ProcessingInput")
   outputJob     VideoProcessingJob?  @relation("ProcessingOutput")
+  episodes      Episode[]            @relation("EpisodeMedia")
 
   @@index([mediaType, status])
   @@index([checksum])
@@ -464,6 +481,7 @@ model VideoProcessingJob {
   outputMediaFileId  String?                    @unique
   outputMediaFile    MediaFile?                 @relation("ProcessingOutput", fields: [outputMediaFileId], references: [id], onDelete: SetNull)
   queueJobId         String?                    @unique
+  kind               VideoProcessingKind        @default(HLS)
   status             VideoProcessingStatus      @default(QUEUED)
   progress           Int                        @default(0)
   processingStage    String                     @default("QUEUED")
@@ -495,6 +513,7 @@ model VideoProcessingJob {
   @@index([status, createdAt])
   @@index([requestedById, createdAt])
   @@index([inputMediaFileId, createdAt])
+  @@index([inputMediaFileId, kind, status])
   @@index([targetType, targetId])
 }
 
