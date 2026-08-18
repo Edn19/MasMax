@@ -37,6 +37,16 @@ export function episodeProcessingLabel(episode: Pick<Episode, 'videoUrl' | 'proc
   return episode.mediaFileId || episode.videoUrl ? 'Sin proceso activo' : 'Sin video';
 }
 
+export function episodePublicationPresentation(episode: Pick<Episode, 'published' | 'publicationState' | 'playbackReadiness'>) {
+  const state = episode.publicationState ?? (episode.published ? 'PUBLISHED' : 'DRAFT');
+  if (state === 'PUBLISHED') return { label: 'Publicado y reproducible', detail: 'Visible en el catálogo público.', tone: 'text-mint' };
+  if (state === 'PUBLISHED_HIDDEN') return { label: 'Publicado pero oculto', detail: 'La temporada no está publicada.', tone: 'text-warning' };
+  if (state === 'PUBLISHED_UNAVAILABLE') return { label: 'Publicado pero video no disponible', detail: episode.playbackReadiness?.message ?? 'La fuente seleccionada no está disponible.', tone: 'text-coral' };
+  if (state === 'PROCESSING') return { label: 'Procesando video', detail: episode.playbackReadiness?.message ?? 'La fuente seleccionada todavía se está generando.', tone: 'text-warning' };
+  if (state === 'READY') return { label: 'Video listo', detail: 'La fuente es reproducible; el episodio permanece como borrador.', tone: 'text-brand' };
+  return { label: 'Borrador', detail: episode.playbackReadiness?.message ?? 'El episodio no está publicado.', tone: 'text-slate-400' };
+}
+
 export function episodeDeleteLabel(episode: Pick<Episode, 'number' | 'title' | 'series' | 'season'>) {
   return `${episode.series?.title ?? 'Serie sin nombre'} · Temporada ${episode.season?.number ?? '?'} · E${episode.number}. ${episode.title}`;
 }

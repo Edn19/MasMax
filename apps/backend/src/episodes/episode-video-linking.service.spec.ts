@@ -40,10 +40,20 @@ describe('EpisodesService video linking', () => {
   };
   const prisma = { $transaction: vi.fn() };
   const storage = { publicUrl: vi.fn((path: string) => `/uploads/${path}`), exists: vi.fn().mockResolvedValue(true) };
-  const service = new EpisodesService(prisma as never, storage as never);
+  const playback = { evaluateSource: vi.fn(async (input: { mode: string; media: { extension: string; relativePath: string; inputJobs: Array<{ status: string; masterPath?: string | null; outputMediaFile?: unknown }> } }) => {
+    if (input.mode === 'ORIGINAL') {
+      if (input.media.extension.toLowerCase() !== '.mp4') return { playable: false, message: 'El archivo original no es compatible para publicacion directa.' };
+      if (!await storage.exists(input.media.relativePath)) return { playable: false, message: 'El archivo original no existe en el almacenamiento.' };
+      return { playable: true, message: null };
+    }
+    const ready = input.media.inputJobs.some((item) => item.status === 'COMPLETED' && (input.mode === 'HLS' ? Boolean(item.masterPath) : Boolean(item.outputMediaFile)));
+    return { playable: ready, message: ready ? null : `El ${input.mode} sigue procesandose o no esta listo.` };
+  }) };
+  const service = new EpisodesService(prisma as never, storage as never, playback as never);
 
   beforeEach(() => {
     vi.clearAllMocks();
+    storage.exists.mockResolvedValue(true);
     tx.series.findFirst.mockResolvedValue({ id: 'series-1' });
     tx.season.findFirst.mockResolvedValue({ id: 'season-1' });
     tx.episode.findFirst.mockResolvedValue(null);

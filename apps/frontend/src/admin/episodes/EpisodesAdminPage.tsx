@@ -17,7 +17,7 @@ import { BulkEpisodeTools } from "./BulkEpisodeTools";
 import { CsvEpisodeImport } from "./CsvEpisodeImport";
 import { EpisodeEditorSource, EpisodeFormState, episodeEditorErrorMessage, episodeFormToUpdatePayload, episodeToFormState, validateEpisodeBasicInfo, withEpisodeFormField, withEpisodePublished } from "./episode-editor";
 import { applyHlsProcessingJob, applyRemuxProcessingJob } from "./episode-media-runtime";
-import { buildEpisodeListQuery, episodeDeleteLabel, episodePageCount, episodeProcessingLabel, EpisodePublishedFilter, EpisodeVideoFilter } from "./episode-list";
+import { buildEpisodeListQuery, episodeDeleteLabel, episodePageCount, episodeProcessingLabel, episodePublicationPresentation, EpisodePublishedFilter, EpisodeVideoFilter } from "./episode-list";
 import { episodeVideoError, episodeVideoIsReady, EpisodeVideoMode } from "./episode-video-linking";
 import { EpisodeMediaSelector, SelectableEpisodeMedia } from "./EpisodeMediaSelector";
 import { getMediaVersions, mediaCompatibilityMessage } from "../media/media-versions";
@@ -924,7 +924,7 @@ export function EpisodesAdminPage() {
                     <span className="block text-xs text-slate-400">Fuente: {item.mediaFileId || item.videoUrl ? `${playbackModeLabel(item.playbackMode ?? "ORIGINAL")}${item.videoUrl ? "" : " (no disponible)"}` : "Sin video"}</span>
                   </td>
                   <td>{episodeProcessingLabel(item)}</td>
-                  <td>{item.published ? (item.playbackMode === "HLS" ? "Publicado con HLS" : item.playbackMode === "REMUX" ? "Publicado con MP4 remux" : "Publicado con original") : "Borrador"}</td>
+                  <td>{(() => { const publication = episodePublicationPresentation(item); return <span className={publication.tone} title={publication.detail}><strong className="block">{publication.label}</strong><span className="block max-w-xs text-xs text-slate-400">{publication.detail}</span></span>; })()}</td>
                   <td>
                     <div className="flex min-w-max flex-wrap gap-2">
                       <button type="button" className="rounded-lg border border-brand px-3 py-1.5 text-brand disabled:opacity-50" disabled={Boolean(changingId) || deleting} onClick={() => void edit(item.id)}>

@@ -8,6 +8,7 @@ import { BulkCreateEpisodesDto, CopyEpisodeSettingsDto, CreateEpisodeDto, Publis
 import { toCatalogResponse } from '../common/catalog-response';
 import { publishedEpisodeWhere, publishedSeriesWhere } from '../common/content-visibility';
 import { directPlaybackCompatibility } from '../video-processing/direct-playback';
+import { EpisodePlaybackReadinessService } from '../playback/episode-playback-readiness.service';
 
 type LinkableVideoJob = Prisma.VideoProcessingJobGetPayload<{ include: { inputMediaFile: true; outputMediaFile: true } }>;
 type LinkableMedia = Prisma.MediaFileGetPayload<{ include: { inputJobs: { include: { outputMediaFile: true } } } }>;
@@ -24,15 +25,27 @@ export function findMissingEpisodeNumbers(numbers: number[]) {
 export class EpisodesService {
   private readonly logger = new Logger(EpisodesService.name);
 
-  constructor(private readonly prisma: PrismaService, private readonly storage: ObjectStorageService) {}
+  constructor(private readonly prisma: PrismaService, private readonly storage: ObjectStorageService, private readonly playback: EpisodePlaybackReadinessService) {}
 
-  latest() {
-    return this.prisma.episode.findMany({
-      where: publishedEpisodeWhere(),
-      include: { season: true, subtitles: { where: { isActive: true }, orderBy: [{ isDefault: 'desc' }, { language: 'asc' }] }, series: { include: { genres: true } } },
-      orderBy: { publishedAt: 'desc' },
-      take: 24,
-    }).then(toCatalogResponse);
+  async latest() {
+    const playable = [];
+    let cursorId: string | undefined;
+    while (playable.length < 24) {
+      const episodes = await this.prisma.episode.findMany({
+        where: publishedEpisodeWhere(),
+        include: { season: true, subtitles: { where: { isActive: true }, orderBy: [{ isDefault: 'desc' }, { language: 'asc' }] }, series: { include: { genres: true } } },
+        orderBy: [{ publishedAt: 'desc' }, { id: 'desc' }],
+        cursor: cursorId ? { id: cursorId } : undefined,
+        skip: cursorId ? 1 : undefined,
+        take: 50,
+      });
+      if (!episodes.length) break;
+      const readiness = await this.playback.getMany(episodes.map((episode) => episode.id));
+      playable.push(...episodes.filter((episode) => readiness.get(episode.id)?.readiness.playable));
+      if (episodes.length < 50) break;
+      cursorId = episodes.at(-1)?.id;
+    }
+    return toCatalogResponse(playable.slice(0, 24));
   }
 
   async adminList(query: QueryAdminEpisodesDto) {
@@ -42,16 +55,22 @@ export class EpisodesService {
       seriesId: query.seriesId,
       seasonId: query.seasonId,
       published: query.published,
-      videoUrl: query.videoState === 'READY' ? { not: null } : query.videoState === 'MISSING' ? null : undefined,
       OR: query.search ? [
         { title: { contains: query.search, mode: 'insensitive' } },
         ...(numericSearch ? [{ number: numericSearch }] : []),
       ] : undefined,
     };
-    const [items, total] = await Promise.all([
-      this.prisma.episode.findMany({ where, include: { season: true, series: true, subtitles: true, mediaFile: true }, orderBy: [{ season: { number: 'asc' } }, { position: 'asc' }, { number: 'asc' }], skip: (query.page - 1) * query.limit, take: query.limit }),
+    const filterByReadiness = Boolean(query.videoState);
+    const [candidates, unfilteredTotal] = await Promise.all([
+      this.prisma.episode.findMany({ where, include: { season: true, series: true, subtitles: true, mediaFile: true }, orderBy: [{ season: { number: 'asc' } }, { position: 'asc' }, { number: 'asc' }], skip: filterByReadiness ? undefined : (query.page - 1) * query.limit, take: filterByReadiness ? undefined : query.limit }),
       this.prisma.episode.count({ where }),
     ]);
+    const candidateReadiness = await this.playback.getMany(candidates.map((item) => item.id));
+    const filtered = query.videoState
+      ? candidates.filter((item) => candidateReadiness.get(item.id)?.readiness.playable === (query.videoState === 'READY'))
+      : candidates;
+    const items = filterByReadiness ? filtered.slice((query.page - 1) * query.limit, query.page * query.limit) : filtered;
+    const total = filterByReadiness ? filtered.length : unfilteredTotal;
     const jobs = items.length ? await this.prisma.videoProcessingJob.findMany({
       where: { targetType: VideoProcessingTargetType.EPISODE, targetId: { in: items.map((item) => item.id) } },
       include: { inputMediaFile: { select: { originalName: true } } },
@@ -59,7 +78,8 @@ export class EpisodesService {
     }) : [];
     const jobsByEpisode = new Map<string | null, ReturnType<EpisodesService['presentEpisodeJob']>>();
     for (const job of jobs) if (!jobsByEpisode.has(job.targetId)) jobsByEpisode.set(job.targetId, this.presentEpisodeJob(job));
-    return { items: items.map((item) => ({ ...item, mediaFile: item.mediaFile ? { ...item.mediaFile, sizeBytes: item.mediaFile.sizeBytes.toString() } : null, processingJob: jobsByEpisode.get(item.id) ?? null })), total, page: query.page, limit: query.limit };
+    const readiness = filterByReadiness ? candidateReadiness : await this.playback.getMany(items.map((item) => item.id));
+    return { items: items.map((item) => ({ ...item, mediaFile: item.mediaFile ? { ...item.mediaFile, sizeBytes: item.mediaFile.sizeBytes.toString() } : null, processingJob: jobsByEpisode.get(item.id) ?? null, playbackReadiness: readiness.get(item.id)?.readiness ?? null, publicationState: readiness.get(item.id)?.publicationState ?? 'DRAFT' })), total, page: query.page, limit: query.limit };
   }
 
   async adminById(id: string) {
@@ -73,17 +93,20 @@ export class EpisodesService {
       include: { inputMediaFile: { select: { originalName: true } } },
       orderBy: { createdAt: 'desc' },
     });
-    return { ...episode, mediaFile: episode.mediaFile ? { ...episode.mediaFile, sizeBytes: episode.mediaFile.sizeBytes.toString() } : null, processingJob: job ? this.presentEpisodeJob(job) : null };
+    const status = await this.playback.getEpisode(id);
+    return { ...episode, mediaFile: episode.mediaFile ? { ...episode.mediaFile, sizeBytes: episode.mediaFile.sizeBytes.toString() } : null, processingJob: job ? this.presentEpisodeJob(job) : null, playbackReadiness: status?.readiness ?? null, publicationState: status?.publicationState ?? 'DRAFT' };
   }
 
   async bySeriesSlug(slug: string) {
     const series = await this.prisma.series.findFirst({ where: publishedSeriesWhere({ slug }) });
     if (!series) throw new NotFoundException('Serie no encontrada');
-    return this.prisma.episode.findMany({
+    const episodes = await this.prisma.episode.findMany({
       where: publishedEpisodeWhere({ seriesId: series.id }),
       include: { season: true, subtitles: { where: { isActive: true }, orderBy: [{ isDefault: 'desc' }, { language: 'asc' }] } },
       orderBy: [{ season: { number: 'asc' } }, { position: 'asc' }, { number: 'asc' }],
-    }).then(toCatalogResponse);
+    });
+    const readiness = await this.playback.getMany(episodes.map((episode) => episode.id));
+    return toCatalogResponse(episodes.filter((episode) => readiness.get(episode.id)?.readiness.playable));
   }
 
   async byId(id: string, ip?: string) {
@@ -92,6 +115,8 @@ export class EpisodesService {
       include: { season: true, subtitles: { where: { isActive: true }, orderBy: [{ isDefault: 'desc' }, { language: 'asc' }] }, series: { include: { genres: true } } },
     });
     if (!episode) throw new NotFoundException('Episodio no encontrado');
+    const readiness = await this.playback.getEpisode(id);
+    if (!readiness?.readiness.playable) throw new NotFoundException('El video del episodio no está disponible');
     await this.prisma.$transaction([
       this.prisma.episode.update({ where: { id }, data: { views: { increment: 1 } } }),
       this.prisma.viewLog.create({ data: { episodeId: id, seriesId: episode.seriesId, ip } }),
@@ -111,6 +136,11 @@ export class EpisodesService {
     try {
       const directVideo = dto.videoUrl ? normalizeVideo({ ...dto, videoUrl: dto.videoUrl, videoSource: dto.videoSource ?? 'URL', videoType: dto.videoType ?? 'MP4' }) : null;
       if (directVideo) await this.assertLocalReady(directVideo);
+      if (dto.published && directVideo) {
+        const mode = dto.playbackMode ?? (directVideo.videoType === VideoType.HLS ? EpisodePlaybackMode.HLS : EpisodePlaybackMode.ORIGINAL);
+        const readiness = await this.playback.evaluateSource({ mode, videoUrl: directVideo.videoUrl, originalVideoUrl: directVideo.originalVideoUrl, processedVideoUrl: directVideo.processedVideoUrl });
+        if (!readiness.playable) throw new BadRequestException(readiness.message);
+      }
       return await this.prisma.$transaction(async (tx) => {
         const series = await tx.series.findFirst({ where: { id: seriesId, deletedAt: null }, select: { id: true } });
         if (!series) throw new BadRequestException('La serie seleccionada no existe');
@@ -153,7 +183,7 @@ export class EpisodesService {
       return await this.prisma.$transaction(async (tx) => {
         if (dto.episodeNumber !== undefined) await this.releaseArchivedNumber(tx, seasonId, dto.episodeNumber);
         const job = dto.processingJobId ? await this.linkableJob(tx, dto.processingJobId, userId, id) : null;
-        const mediaIdToResolve = dto.mediaFileId || (dto.playbackMode !== undefined ? current.mediaFileId : null);
+        const mediaIdToResolve = dto.mediaFileId || (dto.playbackMode !== undefined || dto.published ? current.mediaFileId : null);
         const media = mediaIdToResolve ? await this.linkableMedia(tx, mediaIdToResolve) : null;
         const mediaChanged = mediaWasSubmitted && dto.mediaFileId !== current.mediaFileId;
         const currentPlaybackMode = current.playbackMode ?? (current.videoType === VideoType.HLS ? EpisodePlaybackMode.HLS : EpisodePlaybackMode.ORIGINAL);
@@ -167,6 +197,10 @@ export class EpisodesService {
         const nextRemuxedUrl = jobVideo?.remuxedVideoUrl ?? dto.remuxedVideoUrl ?? (videoReferenceChanged ? null : current.remuxedVideoUrl);
         const nextProcessedUrl = jobVideo?.processedVideoUrl ?? video?.processedVideoUrl ?? (videoReferenceChanged ? null : current.processedVideoUrl);
         const nextHasReadyVideo = Boolean(nextVideoUrl);
+        if (dto.published && !jobVideo && !media) {
+          const readiness = await this.playback.evaluateSource({ mode: playbackMode, videoUrl: nextVideoUrl, originalVideoUrl: nextOriginalUrl, remuxedVideoUrl: nextRemuxedUrl, processedVideoUrl: nextProcessedUrl });
+          if (!readiness.playable) throw new BadRequestException(readiness.message);
+        }
         if (dto.published && !nextHasReadyVideo) throw new BadRequestException(this.playbackUnavailableMessage(playbackMode));
         if (processingReferenceChanged) {
           const selectedMediaId = job?.inputMediaFileId ?? media?.id;
@@ -228,13 +262,21 @@ export class EpisodesService {
 
   async publish(dto: PublishEpisodesDto) {
     const ids = [...new Set(dto.ids)];
+    const episodes = await this.prisma.episode.findMany({ where: { id: { in: ids }, deletedAt: null }, select: { id: true, number: true, title: true, season: { select: { number: true } } } });
+    if (episodes.length !== ids.length) throw new BadRequestException('Uno o mas episodios no existen');
     if (dto.published) {
-      const withoutVideo = await this.prisma.episode.count({ where: { id: { in: ids }, deletedAt: null, videoUrl: null } });
-      if (withoutVideo) throw new ConflictException('No se puede publicar un episodio cuyo video aun no esta listo');
+      const readiness = await this.playback.getMany(ids);
+      const failures = episodes.flatMap((episode) => {
+        const status = readiness.get(episode.id)?.readiness;
+        return status?.playable ? [] : [`Episodio ${episode.season.number}x${String(episode.number).padStart(2, '0')} (${episode.title}): ${status?.message ?? 'No se pudo validar la fuente de reproducción.'}`];
+      });
+      if (failures.length) throw new ConflictException(`No se pudieron publicar ${failures.length} episodios:\n\n${failures.join('\n')}`);
     }
-    const result = await this.prisma.episode.updateMany({ where: { id: { in: ids }, deletedAt: null }, data: { published: dto.published } });
-    if (result.count !== ids.length) throw new BadRequestException('Uno o mas episodios no existen');
-    return { updated: result.count, published: dto.published };
+    return this.prisma.$transaction(async (tx) => {
+      const result = await tx.episode.updateMany({ where: { id: { in: ids }, deletedAt: null }, data: { published: dto.published } });
+      if (result.count !== ids.length) throw new BadRequestException('Uno o mas episodios cambiaron durante la publicación');
+      return { updated: result.count, published: dto.published };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
   async copySettings(dto: CopyEpisodeSettingsDto) {
@@ -354,27 +396,12 @@ export class EpisodesService {
     playbackMode: EpisodePlaybackMode,
     requireReady: boolean,
   ) {
-    if (playbackMode === EpisodePlaybackMode.ORIGINAL) {
-      if (input.sizeBytes <= 0n) throw new ConflictException('El archivo original seleccionado esta vacio');
-      if (!await this.storage.exists(input.relativePath)) throw new ConflictException('El archivo original seleccionado no existe en el almacenamiento');
-      if (requireReady && !directPlaybackCompatibility(input).compatible) throw new BadRequestException(this.playbackUnavailableMessage(playbackMode));
-      return;
-    }
-    if (playbackMode === EpisodePlaybackMode.REMUX) {
-      if (!remux || remux.status !== VideoProcessingStatus.COMPLETED || !remux.outputMediaFile) {
-        if (requireReady) throw new BadRequestException(this.playbackUnavailableMessage(playbackMode));
-        return;
-      }
-      if (remux.outputMediaFile.status !== MediaStatus.READY || remux.outputMediaFile.extension.toLowerCase() !== '.mp4' || remux.outputMediaFile.sizeBytes <= 0n) throw new ConflictException('La salida REMUX no es un MP4 valido y listo');
-      if (!await this.storage.exists(remux.outputMediaFile.relativePath)) throw new ConflictException('El MP4 remux seleccionado no existe en el almacenamiento');
-      return;
-    }
-    if (!hls || hls.status !== VideoProcessingStatus.COMPLETED || !hls.masterPath) {
-      if (requireReady) throw new BadRequestException(this.playbackUnavailableMessage(playbackMode));
-      return;
-    }
-    if (!hls.outputMediaFile || hls.outputMediaFile.status !== MediaStatus.READY) throw new ConflictException('La salida HLS no esta marcada como lista');
-    if (!await this.storage.exists(hls.masterPath)) throw new ConflictException('El manifiesto HLS seleccionado no existe en el almacenamiento');
+    const readiness = await this.playback.evaluateSource({
+      mode: playbackMode,
+      mediaFileId: input.id,
+      media: { ...input, inputJobs: [hls, remux].filter((job): job is NonNullable<typeof job> => Boolean(job)) } as never,
+    });
+    if (requireReady && !readiness.playable) throw new BadRequestException(readiness.message);
   }
 
   private playbackUnavailableMessage(playbackMode: EpisodePlaybackMode) {

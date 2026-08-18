@@ -6,13 +6,14 @@ import { AuthorizeMediaDto } from './dto';
 import { ObjectStorageService } from '../storage/object-storage.service';
 import { publishedEpisodeWhere, publishedMovieWhere } from '../common/content-visibility';
 import { posix } from 'path';
+import { EpisodePlaybackReadinessService } from '../playback/episode-playback-readiness.service';
 
 type HlsClaims = { userId: string; sessionId: string; jobId: string; expires: number; episodeId: string; movieId: string };
 
 @Injectable()
 export class MediaService {
   private readonly logger = new Logger(MediaService.name);
-  constructor(private readonly prisma: PrismaService, private readonly config: ConfigService, private readonly storage: ObjectStorageService) {}
+  constructor(private readonly prisma: PrismaService, private readonly config: ConfigService, private readonly storage: ObjectStorageService, private readonly playback: EpisodePlaybackReadinessService) {}
 
   async authorize(userId: string, sessionId: string, dto: AuthorizeMediaDto, ip?: string) {
     if (Boolean(dto.episodeId) === Boolean(dto.movieId)) throw new BadRequestException('Envia episodeId o movieId');
@@ -20,9 +21,10 @@ export class MediaService {
       ? await this.prisma.episode.findFirst({ where: publishedEpisodeWhere({ id: dto.episodeId }), select: { videoUrl: true, processedVideoUrl: true, remuxedVideoUrl: true, originalVideoUrl: true, playbackMode: true, mediaFileId: true, videoType: true } })
       : await this.prisma.movie.findFirst({ where: publishedMovieWhere({ id: dto.movieId }), select: { videoUrl: true, processedVideoUrl: true, originalVideoUrl: true, videoType: true } }).then((movie) => movie ? { ...movie, mediaFileId: null, remuxedVideoUrl: null, playbackMode: movie.videoType === 'HLS' ? 'HLS' as const : 'ORIGINAL' as const } : null);
     if (!resource) throw new NotFoundException('Contenido no encontrado');
-    const managedEpisode = Boolean(dto.episodeId && resource.mediaFileId);
-    const selectedUrl = resource.playbackMode === 'HLS' ? resource.processedVideoUrl : resource.playbackMode === 'REMUX' ? resource.remuxedVideoUrl : resource.originalVideoUrl;
-    const mediaUrl = managedEpisode ? selectedUrl : selectedUrl || resource.videoUrl;
+    const episodeReadiness = dto.episodeId ? await this.playback.getEpisode(dto.episodeId) : null;
+    if (dto.episodeId && !episodeReadiness?.readiness.playable) throw new NotFoundException(episodeReadiness?.readiness.message ?? 'El video del contenido aun no esta disponible');
+    const selectedUrl = episodeReadiness?.readiness.url ?? (resource.playbackMode === 'HLS' ? resource.processedVideoUrl : resource.playbackMode === 'REMUX' ? resource.remuxedVideoUrl : resource.originalVideoUrl);
+    const mediaUrl = selectedUrl || resource.videoUrl;
     if (!mediaUrl) throw new NotFoundException('El video del contenido aun no esta disponible');
     const path = this.storage.keyFromUrl(mediaUrl);
     const expires = Math.floor(Date.now() / 1000) + Number(this.config.get<string>('MEDIA_URL_EXPIRES_SECONDS') ?? 300);

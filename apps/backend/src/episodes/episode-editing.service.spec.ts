@@ -20,7 +20,8 @@ describe('EpisodesService editing', () => {
     mediaFile: { findUnique: vi.fn() },
     $transaction: vi.fn(),
   };
-  const service = new EpisodesService(prisma as never, { publicUrl: vi.fn((path: string) => `/uploads/${path}`) } as never);
+  const playback = { evaluateSource: vi.fn().mockResolvedValue({ playable: true, message: null }) };
+  const service = new EpisodesService(prisma as never, { publicUrl: vi.fn((path: string) => `/uploads/${path}`) } as never, playback as never);
 
   beforeEach(() => {
     vi.clearAllMocks();

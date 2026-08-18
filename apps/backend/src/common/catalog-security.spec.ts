@@ -39,7 +39,7 @@ describe('catalog security baseline', () => {
 describe('published episode visibility baseline', () => {
   it('latest exige serie padre visible', async () => {
     const findMany = vi.fn().mockResolvedValue([]);
-    const service = new EpisodesService({ episode: { findMany } } as never, {} as never);
+    const service = new EpisodesService({ episode: { findMany } } as never, {} as never, { getMany: vi.fn().mockResolvedValue(new Map()) } as never);
     await service.latest();
     expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({

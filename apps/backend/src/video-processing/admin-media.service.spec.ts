@@ -23,7 +23,8 @@ function setup(job: unknown = completedJob) {
   };
   const storage = { exists: vi.fn().mockResolvedValue(true), publicUrl: vi.fn((key: string) => `/uploads/${key}`), deletePrefix: vi.fn().mockResolvedValue(undefined), delete: vi.fn().mockResolvedValue(undefined) };
   const processing = { cancel: vi.fn(), retry: vi.fn(), associateAsAdmin: vi.fn() };
-  const service = new AdminMediaService(prisma as never, storage as never, processing as never);
+  const playback = { getEpisode: vi.fn().mockResolvedValue({ readiness: { playable: true, message: null } }) };
+  const service = new AdminMediaService(prisma as never, storage as never, processing as never, playback as never);
   return { service, prisma, storage, processing, tx };
 }
 
@@ -74,7 +75,7 @@ describe('AdminMediaService listing', () => {
     };
     const prisma = { mediaFile: { findMany: vi.fn().mockResolvedValue([media]) } };
     const storage = { exists: vi.fn().mockResolvedValue(true), publicUrl: vi.fn((key: string) => `/uploads/${key}`) };
-    const service = new AdminMediaService(prisma as never, storage as never, {} as never);
+    const service = new AdminMediaService(prisma as never, storage as never, {} as never, {} as never);
     const [result] = await service.listSelectable();
     expect(result.remuxStatus).toBe('READY');
     expect(result.remuxUrl).toMatch(/\.mp4$/);
@@ -94,7 +95,7 @@ describe('AdminMediaService listing', () => {
       movie: { findMany: vi.fn().mockResolvedValue([{ id: 'movie1', title: 'Pelicula demo', status: 'PUBLISHED' }]) },
     };
     const storage = { publicUrl: vi.fn((key: string) => `/uploads/${key}`), keyFromUrl: vi.fn((url: string) => url.replace('/uploads/', '')), exists: vi.fn().mockResolvedValue(true) };
-    const service = new AdminMediaService(prisma as never, storage as never, {} as never);
+    const service = new AdminMediaService(prisma as never, storage as never, {} as never, {} as never);
     const result = await service.list(new AdminMediaQueryDto());
     expect(new Set(result.items.map((item) => item.contentType))).toEqual(new Set(['UPLOAD', 'UNASSIGNED', 'MOVIE', 'EPISODE']));
     expect(result.items.find((item) => item.contentType === 'UPLOAD')?.progress).toBe(50);

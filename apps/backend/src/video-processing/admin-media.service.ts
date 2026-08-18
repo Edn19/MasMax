@@ -6,6 +6,7 @@ import { AdminMediaQueryDto } from './admin-media.dto';
 import { VideoProcessingService } from './video-processing.service';
 import { EnqueueVideoProcessingDto } from './video-processing.dto';
 import { directPlaybackCompatibility } from './direct-playback';
+import { EpisodePlaybackReadinessService } from '../playback/episode-playback-readiness.service';
 
 const jobInclude = {
   inputMediaFile: { select: { id: true, originalName: true, relativePath: true, extension: true, sizeBytes: true, status: true, width: true, height: true } },
@@ -60,7 +61,7 @@ export type AdminMediaItem = {
 @Injectable()
 export class AdminMediaService {
   private readonly logger = new Logger(AdminMediaService.name);
-  constructor(private readonly prisma: PrismaService, private readonly storage: ObjectStorageService, private readonly processing: VideoProcessingService) {}
+  constructor(private readonly prisma: PrismaService, private readonly storage: ObjectStorageService, private readonly processing: VideoProcessingService, private readonly playback: EpisodePlaybackReadinessService) {}
 
   async list(query: AdminMediaQueryDto) {
     const [jobs, uploads, videoFiles] = await Promise.all([
@@ -235,8 +236,11 @@ export class AdminMediaService {
       await this.processing.associateAsAdmin(id, { targetType: job.targetType, targetId: job.targetId }, adminId);
       job = await this.findJob(id);
     }
-    if (job.targetType === VideoProcessingTargetType.EPISODE) await this.prisma.episode.update({ where: { id: job.targetId! }, data: { published: true } });
-    else await this.prisma.movie.update({ where: { id: job.targetId! }, data: { status: 'PUBLISHED' } });
+    if (job.targetType === VideoProcessingTargetType.EPISODE) {
+      const status = await this.playback.getEpisode(job.targetId!);
+      if (!status?.readiness.playable) throw new ConflictException(status?.readiness.message ?? 'El episodio no tiene una fuente reproducible');
+      await this.prisma.episode.update({ where: { id: job.targetId! }, data: { published: true } });
+    } else await this.prisma.movie.update({ where: { id: job.targetId! }, data: { status: 'PUBLISHED' } });
     return this.get(id);
   }
 

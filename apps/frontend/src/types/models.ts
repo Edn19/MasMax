@@ -87,6 +87,16 @@ export type Episode = {
   season?: Season;
   subtitles?: SubtitleTrack[];
   processingJob?: EpisodeProcessingJob | null;
+  publicationState?: 'DRAFT' | 'PROCESSING' | 'READY' | 'PUBLISHED' | 'PUBLISHED_HIDDEN' | 'PUBLISHED_UNAVAILABLE';
+  playbackReadiness?: {
+    playable: boolean;
+    processing: boolean;
+    mode: EpisodePlaybackMode;
+    sourceType: 'ORIGINAL' | 'REMUX' | 'HLS' | 'EXTERNAL';
+    mediaFileId: string | null;
+    reason: string | null;
+    message: string | null;
+  } | null;
 };
 
 export type EpisodeProcessingJob = {
